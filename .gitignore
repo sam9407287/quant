@@ -58,6 +58,9 @@ logs/
 # Railway
 .railway/
 
+# Claude Code local settings (personal, not for team)
+.claude/settings.local.json
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
