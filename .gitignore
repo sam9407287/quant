@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.whl
+MANIFEST
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables — NEVER commit real credentials
+.env
+.env.local
+.env.production
+
+# Data files — never commit raw market data
+data/
+*.csv
+*.zip
+*.xlsx
+
+# IDE
+.vscode/settings.json
+.idea/
+*.iml
+.DS_Store
+
+# Docker
+.docker/
+
+# Logs
+logs/
+*.log
+
+# Railway
+.railway/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

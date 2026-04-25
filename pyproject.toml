@@ -1,0 +1,23 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "TCH"]
+ignore = ["E501"]
+
+[tool.ruff.per-file-ignores]
+"scripts/*" = ["T201"]   # allow print() in scripts
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+exclude = ["scripts/", "tests/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app", "fetcher"]
+omit = ["tests/*", "scripts/*"]
