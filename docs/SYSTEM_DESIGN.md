@@ -1,173 +1,145 @@
-# 系統設計文件 (System Design)
+# System Design
 
-## 1. 整體架構
+## 1. Architecture
 
-### Period 1（當前）
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  Railway Platform                    │
-│                                                      │
-│  ┌─────────────────┐    ┌──────────────────────┐   │
-│  │   API Service   │    │   Fetcher Service    │   │
-│  │   (FastAPI)     │    │   (Worker/Cron)      │   │
-│  │                 │    │                      │   │
-│  │  GET /kbars     │    │  每日 18:00 EST 執行  │   │
-│  │  GET /coverage  │    │  yfinance → DB        │   │
-│  └────────┬────────┘    └──────────┬───────────┘   │
-│           │                        │                │
-│           └──────────┬─────────────┘                │
-│                      │                              │
-│         ┌────────────▼────────────┐                 │
-│         │      TimescaleDB        │                 │
-│         │   (PostgreSQL + ext)    │                 │
-│         │                        │                 │
-│         │  kbars_1m (hypertable) │                 │
-│         │  roll_calendar          │                 │
-│         │  data_coverage          │                 │
-│         │  [continuous aggregates]│                 │
-│         └─────────────────────────┘                 │
-└─────────────────────────────────────────────────────┘
-          ▲                   ▲
-          │                   │
-   [開發者/分析工具]        [yfinance]
-   Jupyter / API            Yahoo Finance
-                            (CME 官方延遲數據)
-```
-
-### Period 3（未來）
+### Period 1 — Data Collection
 
 ```
-加入：
-  ┌──────────────────────────────┐
-  │  Real-time Engine Service    │
-  │  (ib_insync + asyncio)       │
-  │                              │
-  │  1m bar → Redis → Signal     │
-  │  Signal → Order → IBKR API   │
-  └──────────────────────────────┘
-       ↕ TCP
-  ┌──────────────────┐
-  │  IB Gateway      │  ← 獨立 VPS 或本機
-  │  (Docker)        │
-  └──────────────────┘
-       ↕
-  [IBKR 伺服器]
+┌────────────────────────────────────────────────────────┐
+│                     Railway Platform                    │
+│                                                         │
+│  ┌──────────────────┐     ┌─────────────────────────┐  │
+│  │   API Service    │     │    Fetcher Service      │  │
+│  │   (FastAPI)      │     │  (APScheduler Worker)   │  │
+│  │                  │     │                         │  │
+│  │  REST /api/v1/*  │     │  Weekdays 18:00 UTC     │  │
+│  │  Auto OpenAPI    │     │  yfinance → TimescaleDB │  │
+│  └────────┬─────────┘     └────────────┬────────────┘  │
+│           │                            │                │
+│           └──────────────┬─────────────┘                │
+│                          │                              │
+│             ┌────────────▼─────────────┐                │
+│             │       TimescaleDB        │                │
+│             │  kbars_1m  (hypertable)  │                │
+│             │  roll_calendar           │                │
+│             │  data_coverage           │                │
+│             │  ── Continuous Aggregates──               │
+│             │  kbars_5m / 15m / 1h     │                │
+│             │  kbars_4h / 1d / 1w      │                │
+│             └──────────────────────────┘                │
+└────────────────────────────────────────────────────────┘
+```
+
+### Period 3 — Live Trading (additive to Period 1 infra)
+
+```
+Added services:
+  ┌──────────────────────────────────┐
+  │     Real-time Engine Service     │
+  │   (ib_insync + asyncio)          │
+  │                                  │
+  │  1m bar → Redis Pub/Sub          │
+  │  Signal engine subscribes        │
+  │  Signals → Order executor        │
+  │  Orders → IBKR TWS API           │
+  └──────────────┬───────────────────┘
+                 │ TCP socket
+  ┌──────────────▼───────────────────┐
+  │  IB Gateway (Docker, VPS)        │
+  └──────────────────────────────────┘
+                 │
+        [IBKR Broker Servers]
 ```
 
 ---
 
-## 2. 資料庫設計
+## 2. Database Design
 
-### TimescaleDB Schema
+### Core Principle
+
+Only `kbars_1m` is written to directly. All other timeframes are computed automatically via TimescaleDB Continuous Aggregates and are always consistent with the source data.
+
+### Schema
 
 ```sql
--- ============================================
--- 擴充 TimescaleDB
--- ============================================
+-- Enable TimescaleDB extension
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
--- ============================================
--- 主數據表：1m 原始 K 棒（唯一手動維護的表）
--- ============================================
+-- ─────────────────────────────────────────
+-- Primary table: raw 1m bars
+-- ─────────────────────────────────────────
 CREATE TABLE kbars_1m (
-    instrument  TEXT        NOT NULL,   -- 'NQ', 'ES', 'YM', 'RTY'
-    ts          TIMESTAMPTZ NOT NULL,   -- UTC 時間
+    instrument  TEXT           NOT NULL,  -- 'NQ', 'ES', 'YM', 'RTY'
+    ts          TIMESTAMPTZ    NOT NULL,  -- UTC
     open        NUMERIC(12, 4) NOT NULL,
     high        NUMERIC(12, 4) NOT NULL,
     low         NUMERIC(12, 4) NOT NULL,
     close       NUMERIC(12, 4) NOT NULL,
-    volume      BIGINT      NOT NULL,
-    source      TEXT        NOT NULL    -- 'firstrate', 'yfinance', 'ibkr'
+    volume      BIGINT         NOT NULL,
+    source      TEXT           NOT NULL   -- 'firstrate' | 'yfinance' | 'ibkr'
 );
 
--- 轉為 hypertable，按時間自動分區（每週一個 chunk）
 SELECT create_hypertable('kbars_1m', 'ts', chunk_time_interval => INTERVAL '1 week');
 
--- 唯一索引（防止重複寫入）
-CREATE UNIQUE INDEX ON kbars_1m (instrument, ts);
+-- Deduplication guard — silently ignore duplicate inserts
+CREATE UNIQUE INDEX uix_kbars_1m ON kbars_1m (instrument, ts);
 
--- 查詢索引
-CREATE INDEX ON kbars_1m (instrument, ts DESC);
+-- Query performance index
+CREATE INDEX idx_kbars_1m_lookup ON kbars_1m (instrument, ts DESC);
 
--- ============================================
--- 高時間框架（Continuous Aggregates，自動推導）
--- ============================================
+-- ─────────────────────────────────────────
+-- Derived timeframes (auto-managed by TimescaleDB)
+-- ─────────────────────────────────────────
 CREATE MATERIALIZED VIEW kbars_5m
 WITH (timescaledb.continuous) AS
 SELECT
     instrument,
-    time_bucket('5 minutes', ts)  AS ts,
-    first(open, ts)               AS open,
-    max(high)                     AS high,
-    min(low)                      AS low,
-    last(close, ts)               AS close,
-    sum(volume)                   AS volume
+    time_bucket('5 minutes', ts) AS ts,
+    first(open, ts)              AS open,
+    max(high)                    AS high,
+    min(low)                     AS low,
+    last(close, ts)              AS close,
+    sum(volume)                  AS volume
 FROM kbars_1m
-GROUP BY instrument, time_bucket('5 minutes', ts);
+GROUP BY 1, 2;
 
--- 同理建立 15m, 1h, 4h, 1d, 1w
-CREATE MATERIALIZED VIEW kbars_15m WITH (timescaledb.continuous) AS
-SELECT instrument, time_bucket('15 minutes', ts) AS ts,
-    first(open,ts), max(high), min(low), last(close,ts), sum(volume)
-FROM kbars_1m GROUP BY 1, 2;
+-- Repeat for 15m, 1h, 4h, 1d, 1w with respective bucket widths
 
-CREATE MATERIALIZED VIEW kbars_1h WITH (timescaledb.continuous) AS
-SELECT instrument, time_bucket('1 hour', ts) AS ts,
-    first(open,ts), max(high), min(low), last(close,ts), sum(volume)
-FROM kbars_1m GROUP BY 1, 2;
-
-CREATE MATERIALIZED VIEW kbars_4h WITH (timescaledb.continuous) AS
-SELECT instrument, time_bucket('4 hours', ts) AS ts,
-    first(open,ts), max(high), min(low), last(close,ts), sum(volume)
-FROM kbars_1m GROUP BY 1, 2;
-
-CREATE MATERIALIZED VIEW kbars_1d WITH (timescaledb.continuous) AS
-SELECT instrument, time_bucket('1 day', ts) AS ts,
-    first(open,ts), max(high), min(low), last(close,ts), sum(volume)
-FROM kbars_1m GROUP BY 1, 2;
-
-CREATE MATERIALIZED VIEW kbars_1w WITH (timescaledb.continuous) AS
-SELECT instrument, time_bucket('1 week', ts) AS ts,
-    first(open,ts), max(high), min(low), last(close,ts), sum(volume)
-FROM kbars_1m GROUP BY 1, 2;
-
--- 自動刷新策略（每小時刷新最近 2 天的數據）
+-- Refresh policy: keep last 2 days up to date, check hourly
 SELECT add_continuous_aggregate_policy('kbars_5m',
-    start_offset => INTERVAL '2 days',
-    end_offset   => INTERVAL '1 hour',
+    start_offset    => INTERVAL '2 days',
+    end_offset      => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
--- 同理設定其他時間框架的 policy
 
--- ============================================
--- 換倉日曆
--- ============================================
+-- ─────────────────────────────────────────
+-- Contract roll calendar
+-- ─────────────────────────────────────────
 CREATE TABLE roll_calendar (
-    id              SERIAL PRIMARY KEY,
-    instrument      TEXT        NOT NULL,   -- 'NQ', 'ES', 'YM', 'RTY'
-    old_contract    TEXT        NOT NULL,   -- 'NQH25'
-    new_contract    TEXT        NOT NULL,   -- 'NQM25'
-    roll_date       DATE        NOT NULL,
-    roll_ts         TIMESTAMPTZ,            -- 精確換倉時間（午夜 EST）
-    price_diff      NUMERIC(12, 4),         -- new_open - old_close（Absolute Adjust 用）
-    price_ratio     NUMERIC(10, 8),         -- new_open / old_close（Ratio Adjust 用）
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    id            SERIAL PRIMARY KEY,
+    instrument    TEXT           NOT NULL,
+    old_contract  TEXT           NOT NULL,  -- e.g. 'NQH25'
+    new_contract  TEXT           NOT NULL,  -- e.g. 'NQM25'
+    roll_date     DATE           NOT NULL,
+    roll_ts       TIMESTAMPTZ,              -- midnight ET on roll date
+    price_diff    NUMERIC(12, 4),           -- new_open - old_close (absolute adjust)
+    price_ratio   NUMERIC(10, 8),           -- new_open / old_close (ratio adjust)
+    created_at    TIMESTAMPTZ    DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX ON roll_calendar (instrument, roll_date);
+CREATE UNIQUE INDEX uix_roll_calendar ON roll_calendar (instrument, roll_date);
 
--- ============================================
--- 數據覆蓋追蹤
--- ============================================
+-- ─────────────────────────────────────────
+-- Data coverage tracking
+-- ─────────────────────────────────────────
 CREATE TABLE data_coverage (
-    instrument      TEXT    NOT NULL,
-    timeframe       TEXT    NOT NULL,   -- '1m', '5m', '15m', '1h', '4h', '1d', '1w'
+    instrument      TEXT        NOT NULL,
+    timeframe       TEXT        NOT NULL,  -- '1m', '5m', '1h', etc.
     earliest_ts     TIMESTAMPTZ,
     latest_ts       TIMESTAMPTZ,
-    bar_count       BIGINT  DEFAULT 0,
-    gap_count       INT     DEFAULT 0,  -- 偵測到的缺口數
+    bar_count       BIGINT      DEFAULT 0,
+    gap_count       INT         DEFAULT 0,
     last_fetch_ts   TIMESTAMPTZ,
-    last_fetch_ok   BOOLEAN DEFAULT TRUE,
+    last_fetch_ok   BOOLEAN     DEFAULT TRUE,
     updated_at      TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (instrument, timeframe)
 );
@@ -175,214 +147,175 @@ CREATE TABLE data_coverage (
 
 ---
 
-## 3. 換倉（Roll）處理設計
+## 3. Contract Roll Handling
 
-### 換倉時間表（CME 標準）
-
-```
-NQ / ES / RTY：每年 3, 6, 9, 12 月第三個星期五
-YM           ：每年 3, 6, 9, 12 月第三個星期五
-
-實際換倉日（Volume 轉移日）通常在到期日前 2 週：
-  2025 年換倉日參考：
-    2025-03-13（3 月合約 → 6 月合約）
-    2025-06-12（6 月合約 → 9 月合約）
-    2025-09-11（9 月合約 → 12 月合約）
-    2025-12-11（12 月合約 → 2026 年 3 月合約）
-```
-
-### 合約代碼命名規則
+### Roll Schedule (CME Standard)
 
 ```
-格式：[商品][月份代碼][年份後兩位]
-  H = 3月, M = 6月, U = 9月, Z = 12月
+NQ, ES, RTY, YM roll quarterly: 3rd Friday of Mar / Jun / Sep / Dec
+Volume migrates to the new contract approximately 2 weeks before expiry.
+FirstRate Data rolls at midnight ET when volume crosses over.
 
-範例：
-  NQH25 = NQ 2025年3月合約
-  ESM25 = ES 2025年6月合約
-  YMU25 = YM 2025年9月合約
-  RTYZ25 = RTY 2025年12月合約
+2025 roll dates:
+  2025-03-13  (Mar → Jun contract)
+  2025-06-12  (Jun → Sep contract)
+  2025-09-11  (Sep → Dec contract)
+  2025-12-11  (Dec → Mar 2026 contract)
 ```
 
-### Ratio Adjustment 計算邏輯
+### Contract Code Conventions
 
-```python
-# 換倉當天，計算 ratio
-ratio = new_contract_open / old_contract_close
+```
+Format: [Symbol][Month][2-digit year]
+Month codes:  H = Mar   M = Jun   U = Sep   Z = Dec
 
-# 查詢時，對換倉日之前的所有 close/open/high/low 乘上 ratio（累乘）
-# 越舊的數據累乘的 ratio 越多，保留漲跌幅百分比關係
-
-# 範例：
-# roll_calendar 有 3 次換倉記錄
-# 查詢 2020 年的數據 → 需乘上 2020-2025 年間所有 ratio 的連乘積
+Examples:
+  NQH25  = NQ March 2025
+  ESM25  = ES June 2025
+  YMU25  = YM September 2025
+  RTYZ25 = RTY December 2025
 ```
 
-### API 查詢時的調整邏輯（Pseudo Code）
+### Price Adjustment at Query Time
 
-```python
-def get_kbars(instrument, timeframe, start, end, adjustment='ratio'):
-    raw_data = query_timescaledb(instrument, timeframe, start, end)
+```
+Raw storage: unadjusted prices (real traded values, price gaps visible at rolls)
 
-    if adjustment == 'raw':
-        return raw_data
+Ratio Adjustment (default, recommended for technical analysis):
+  For each roll event after query start date:
+    ratio = new_contract_open / old_contract_close
+  Apply cumulative product of all ratios to all bars before each respective roll.
+  Result: percentage moves are preserved; absolute levels shift.
 
-    rolls = get_rolls_after(instrument, start)  # 取 start 之後的所有換倉
-
-    if adjustment == 'ratio':
-        cumulative_ratio = product([r.price_ratio for r in rolls])
-        raw_data['open']  *= cumulative_ratio
-        raw_data['high']  *= cumulative_ratio
-        raw_data['low']   *= cumulative_ratio
-        raw_data['close'] *= cumulative_ratio
-
-    elif adjustment == 'absolute':
-        cumulative_diff = sum([r.price_diff for r in rolls])
-        # 加到 OHLC 上
-
-    return raw_data
+Absolute Adjustment:
+  For each roll: diff = new_contract_open - old_contract_close
+  Apply cumulative sum to all bars before each respective roll.
+  Result: dollar moves are preserved; can produce negative prices for old data.
 ```
 
 ---
 
-## 4. 數據抓取流程設計
+## 4. Data Ingestion Design
 
-### 每日補齊流程（Fetcher Service）
+### Daily Fetch Flow (Fetcher Service)
 
 ```
-每天 美東 18:00（週一至週五）觸發：
+Trigger: weekdays at 18:00 UTC (APScheduler cron)
 
 For each instrument in [NQ, ES, YM, RTY]:
-    1. 用 yfinance 抓最近 7 天的 1m K 棒
-    2. 與資料庫中現有數據比對（by timestamp）
-    3. 只寫入不存在的新數據（UPSERT ON CONFLICT DO NOTHING）
-    4. 偵測是否為換倉日（volume 比較新舊合約）
-       → 若是：寫入 roll_calendar
-    5. 更新 data_coverage 表
-
-寫入 LOG：
-    - 抓取幾筆、寫入幾筆、跳過幾筆
-    - 是否偵測到換倉
-    - 是否有異常值
+  1. Fetch last 7 days of 1m bars from yfinance (7-day overlap)
+  2. Upsert into kbars_1m (ON CONFLICT DO NOTHING — dedup is free)
+  3. Detect roll: compare volume between old and new front-month contract
+     → If roll detected: insert into roll_calendar, compute price_diff / price_ratio
+  4. Refresh data_coverage row for this instrument
+  5. Emit structured log: {instrument, fetched, inserted, skipped, roll_detected}
 ```
 
-### 初始化流程（一次性）
+### One-Time Bootstrap Flow
 
 ```
-scripts/bootstrap_csv.py：
+scripts/bootstrap_csv.py:
 
-1. 解壓縮 FirstRate Data ZIP 檔（Unadjusted 版本）
-2. 解析 CSV 格式：
-   FirstRate 格式：DateTime, Open, High, Low, Close, Volume
-   → 轉換為系統格式：instrument, ts(UTC), open, high, low, close, volume, source='firstrate'
-3. 批次寫入 kbars_1m（每批 10,000 筆）
-4. 完成後跑一次 verify_coverage.py
+1. Decompress FirstRate Data ZIP (Unadjusted version)
+2. Parse CSV: DateTime (EST), Open, High, Low, Close, Volume
+3. Convert timestamps to UTC
+4. Batch upsert into kbars_1m in chunks of 10,000 rows
+5. Run verify_coverage.py on completion
 
-CSV 時間欄位注意：
-   FirstRate 使用 EST 時間 → 寫入時轉換為 UTC
+Time zone note: FirstRate uses EST — convert with pytz or zoneinfo before insert.
 ```
 
-### 缺口偵測邏輯
+### Gap Detection Logic
 
 ```python
-# scripts/verify_coverage.py
+# Valid trading windows (ET):
+#   Weekdays: 18:00 previous day → 17:00 current day
+#   Exclude:  17:00–18:00 daily settlement break
+#   Exclude:  Saturday, Sunday
+#   Exclude:  US federal holidays (use pandas_market_calendars)
 
-TRADING_SESSIONS = {
-    # 美東時間
-    'open': time(18, 0),   # 前一天 18:00
-    'close': time(17, 0),  # 當天 17:00
-    'daily_break': (time(17, 0), time(18, 0))  # 每天休市 1 小時
-}
-
-def find_gaps(instrument, start, end):
-    """
-    在正常交易時段內，找出連續缺少 2 根以上 1m K 棒的區間
-    排除：
-      - 每天 17:00~18:00 休市
-      - 週末（週五 17:00 ~ 週日 18:00）
-      - 美國國定假日
-    """
+# A "gap" is defined as 2+ consecutive missing 1m bars within a valid window.
+# Output: list of (gap_start, gap_end, missing_bar_count) tuples
 ```
 
 ---
 
-## 5. 專案結構詳細設計
+## 5. Project Structure
 
 ```
 quant-futures/
-│
-├── app/                            # FastAPI 服務
+├── app/                         # FastAPI service
 │   ├── api/
-│   │   ├── __init__.py
-│   │   ├── kbars.py               # GET /kbars
-│   │   ├── coverage.py            # GET /coverage, /coverage/gaps
-│   │   └── roll_calendar.py       # GET /roll_calendar
+│   │   ├── kbars.py             # GET /api/v1/kbars
+│   │   ├── coverage.py          # GET /api/v1/coverage[/gaps]
+│   │   └── roll_calendar.py     # GET /api/v1/roll-calendar
 │   ├── core/
-│   │   ├── config.py              # 環境變數設定
-│   │   └── adjustment.py          # Ratio/Absolute 調整邏輯
+│   │   ├── config.py            # Pydantic BaseSettings
+│   │   └── adjustment.py        # Ratio / absolute price adjustment logic
 │   ├── db/
-│   │   └── session.py             # SQLAlchemy async session
-│   └── main.py                    # FastAPI app 入口
+│   │   └── session.py           # Async SQLAlchemy engine + session factory
+│   └── main.py                  # FastAPI app, middleware, lifespan
 │
-├── fetcher/                        # Fetcher Worker 服務
+├── fetcher/                     # Worker service
 │   ├── sources/
-│   │   ├── base.py                # DataSource 抽象介面
-│   │   └── yfinance_source.py     # yfinance 實作
-│   ├── pipeline.py                # 數據清洗、去重、寫入
-│   ├── roll_detector.py           # 換倉日偵測邏輯
-│   ├── scheduler.py               # APScheduler 定時任務
-│   └── main.py                    # Worker 入口
+│   │   ├── base.py              # DataSource ABC
+│   │   └── yfinance_source.py   # yfinance implementation
+│   ├── pipeline.py              # Clean, validate, upsert
+│   ├── roll_detector.py         # Contract roll detection
+│   ├── scheduler.py             # APScheduler job definitions
+│   └── main.py                  # Worker entry point
 │
 ├── db/
-│   ├── schema.sql                 # 完整 DDL（含 TimescaleDB 設定）
-│   ├── seed_roll_calendar.sql     # 預填換倉日曆（2008-2030）
-│   └── session.py                 # 共用 DB 連線
+│   ├── schema.sql               # Full DDL including TimescaleDB setup
+│   └── seed_roll_calendar.sql   # Pre-filled roll dates 2008–2030
 │
 ├── scripts/
-│   ├── bootstrap_csv.py           # 一次性：匯入 FirstRate CSV
-│   └── verify_coverage.py        # 數據完整性檢查
-│
-├── docs/
-│   ├── SPEC.md                    # 本文件（規格）
-│   └── SYSTEM_DESIGN.md           # 本文件（設計）
+│   ├── bootstrap_csv.py         # One-time: import FirstRate Data CSVs
+│   └── verify_coverage.py       # Gap detection + coverage report
 │
 ├── tests/
-│   ├── test_pipeline.py           # 去重、寫入邏輯測試
-│   ├── test_adjustment.py         # Roll 調整計算測試
-│   └── test_api.py                # API 端點測試
+│   ├── conftest.py              # Async DB fixtures
+│   ├── test_pipeline.py         # Dedup, upsert logic
+│   ├── test_adjustment.py       # Roll adjustment calculations
+│   └── test_api.py              # API endpoint integration tests
 │
-├── .env.example                   # 環境變數範本
-├── Dockerfile                     # API 服務
-├── Dockerfile.fetcher             # Fetcher Worker
-├── docker-compose.yml             # 本地開發環境
-├── railway.toml                   # Railway 部署設定
-├── requirements.txt
-└── CLAUDE.md
+├── docs/
+│   ├── SPEC.md                  # Functional requirements & API spec
+│   └── SYSTEM_DESIGN.md         # This file
+│
+├── .github/
+│   └── workflows/ci.yml         # GitHub Actions: lint → typecheck → test → docker
+│
+├── .env.example                 # All env vars documented, no real values
+├── docker-compose.yml           # Local dev: TimescaleDB + API + Fetcher
+├── Dockerfile                   # API service image
+├── Dockerfile.fetcher           # Fetcher worker image
+├── pyproject.toml               # ruff + mypy + pytest config
+└── CLAUDE.md                    # AI assistant context
 ```
 
 ---
 
-## 6. 環境變數設計
+## 6. Environment Variables
 
 ```bash
-# .env.example
+# Database (Railway injects automatically in production)
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/quant_futures
 
-# 資料庫
-DATABASE_URL=postgresql+asyncpg://user:password@host:5432/quant_futures
+# Fetcher
+FETCH_INSTRUMENTS=NQ,ES,YM,RTY
+FETCH_OVERLAP_DAYS=7
+FETCH_CRON=0 18 * * 1-5          # weekdays 18:00 UTC
 
-# Railway 環境自動注入：
-# ${{PGHOST}}, ${{PGPORT}}, ${{PGUSER}}, ${{PGPASSWORD}}, ${{PGDATABASE}}
-
-# 數據抓取設定
-FETCH_INSTRUMENTS=NQ,ES,YM,RTY          # 要抓的商品
-FETCH_CRON=0 18 * * 1-5                 # 每週一至週五 18:00 UTC
-FETCH_OVERLAP_DAYS=7                     # yfinance 抓取重疊天數
-
-# API 設定
+# API
 API_HOST=0.0.0.0
 API_PORT=8000
+CORS_ORIGINS=http://localhost:3000  # comma-separated in production
 
-# Period 3 用（現在不需要）
+# Security
+API_SECRET_KEY=<openssl rand -hex 32>
+
+# Period 3 (not needed yet)
 # IBKR_HOST=
 # IBKR_PORT=4003
 # IBKR_CLIENT_ID=1
@@ -390,126 +323,98 @@ API_PORT=8000
 
 ---
 
-## 7. Railway 部署設定
+## 7. Deployment
 
-```toml
-# railway.toml
+### Railway Services
 
-[build]
-builder = "DOCKERFILE"
+| Service | Dockerfile | Role |
+|---------|-----------|------|
+| `api` | `Dockerfile` | FastAPI REST server |
+| `fetcher` | `Dockerfile.fetcher` | Daily data ingestion worker |
 
-[[services]]
-name = "api"
-dockerfile = "Dockerfile"
-healthcheckPath = "/health"
-healthcheckTimeout = 30
+Railway's PostgreSQL plugin is used with the TimescaleDB extension enabled post-provision.
 
-[[services]]
-name = "fetcher"
-dockerfile = "Dockerfile.fetcher"
-```
+### Docker Images
 
 ```dockerfile
-# Dockerfile（API）
+# Shared base pattern (both services)
 FROM python:3.12-slim
+RUN addgroup --system app && adduser --system --group app   # non-root user
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-# Dockerfile.fetcher（Worker）
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["python", "fetcher/main.py"]
+USER app
 ```
 
----
-
-## 8. 本地開發環境
+### Local Development
 
 ```yaml
-# docker-compose.yml
-version: '3.8'
+# docker-compose.yml (key services)
 services:
   db:
     image: timescale/timescaledb:latest-pg16
-    environment:
-      POSTGRES_DB: quant_futures
-      POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev
-    ports:
-      - "5432:5432"
+    ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./db/seed_roll_calendar.sql:/docker-entrypoint-initdb.d/02_seed.sql
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: { dockerfile: Dockerfile }
+    ports: ["8000:8000"]
     env_file: .env
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
+    depends_on: [db]
 
   fetcher:
-    build:
-      context: .
-      dockerfile: Dockerfile.fetcher
+    build: { dockerfile: Dockerfile.fetcher }
     env_file: .env
-    depends_on:
-      - db
-
-volumes:
-  pgdata:
+    depends_on: [db]
 ```
 
 ---
 
-## 9. 技術選型理由
+## 8. Tech Stack Rationale
 
-| 技術 | 選擇原因 |
-|------|---------|
-| TimescaleDB | 時序數據原生支援、Continuous Aggregates 自動推導高時間框架、比純 PostgreSQL 快 100x |
-| FastAPI | async 支援、自動 OpenAPI 文件、Python 生態系完整 |
-| APScheduler | 輕量、不需 Redis/Celery、適合單一 Worker 定時任務 |
-| yfinance | 免費、穩定、CME 期貨數據來源可靠（Yahoo 取自官方） |
-| VectorBT（Period 2）| 向量化回測，百萬根 K 棒秒級完成 |
-| pandas-ta | 純 Python，90+ 指標，不需編譯 |
-| ib_insync（Period 3）| IBKR 官方 Python 非同步封裝，社群活躍 |
+| Technology | Reason |
+|-----------|--------|
+| TimescaleDB | Native time-series hypertables; Continuous Aggregates eliminate manual OHLCV rollup |
+| FastAPI | Async-native; auto OpenAPI docs; excellent Pydantic integration |
+| APScheduler | Zero extra infrastructure (no Redis/Celery needed for a single-worker cron) |
+| yfinance | Free; CME-sourced; adequate for T+0 daily ingestion |
+| VectorBT (Period 2) | Vectorized backtester; millions of bars in seconds |
+| pandas-ta | 90+ indicators; pure Python; no compilation |
+| ib_insync (Period 3) | Async wrapper for IBKR TWS API; production-proven |
+| Railway Pro | Managed compute + PostgreSQL; zero-ops for a solo project |
+| GitHub Actions | First-class CI for open-source; free for public repos |
 
 ---
 
-## 10. 開發里程碑（Period 1）
+## 9. Period 1 Development Milestones
 
 ```
-Week 1
-  □ docker-compose 本地環境建立
-  □ db/schema.sql 完成（含 Continuous Aggregates）
-  □ db/seed_roll_calendar.sql 預填 2008-2030 換倉日
+Week 1: Infrastructure
+  □ docker-compose with TimescaleDB running locally
+  □ db/schema.sql applied and verified
+  □ db/seed_roll_calendar.sql populated (2008–2030)
 
-Week 2
-  □ scripts/bootstrap_csv.py 完成
-  □ 匯入 FirstRate Data CSV，驗證數據筆數
-  □ scripts/verify_coverage.py 完成，確認無缺口
+Week 2: Data Bootstrap
+  □ scripts/bootstrap_csv.py complete
+  □ FirstRate Data imported, bar counts verified
+  □ scripts/verify_coverage.py passing (< 0.1% gaps)
 
-Week 3
-  □ fetcher/ 每日補齊邏輯完成
-  □ 本地測試：手動觸發一次，確認寫入正確
-  □ roll_detector.py 完成
+Week 3: Daily Automation
+  □ fetcher/ service complete with roll detection
+  □ Manual trigger test passes end-to-end
+  □ APScheduler cron confirmed running in Docker
 
-Week 4
-  □ app/ FastAPI 完成（kbars, coverage API）
-  □ Railway 部署（API + Fetcher 兩個 Service）
-  □ 確認每日自動跑通
+Week 4: API + Deployment
+  □ app/ FastAPI with /kbars, /coverage, /roll-calendar
+  □ All CI checks passing on GitHub Actions
+  □ Deployed to Railway; daily fetch confirmed in production logs
 
-Period 1 完成條件：
-  □ 四個商品皆有完整歷史數據
-  □ 連續 2 週自動補齊正常
-  □ coverage API 顯示缺口 < 0.1%
+Definition of Done for Period 1:
+  □ All four instruments have data from 2008-01-02 to present
+  □ Two consecutive weeks of automated daily fetches with zero failures
+  □ Coverage API shows gap_count = 0 for all instruments
 ```

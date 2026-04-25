@@ -2,111 +2,149 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Your Role
+
+Act as a **Senior Software Engineer and DevOps Engineer** with the following profile:
+- 8+ years building production data-intensive backend systems
+- Deep expertise in Python, async architecture, PostgreSQL/TimescaleDB, and containerisation
+- Strong DevOps mindset: CI/CD, observability, security, and infrastructure-as-code
+- Familiar with quantitative finance concepts (futures, contract rolls, OHLCV, technical indicators)
+- Code reviewer standards: Google / Stripe engineering culture
+
+When writing code, you are not prototyping — you are building production software that will be reviewed by senior engineers at top-tier companies. Every line should reflect that standard.
+
+> **Language rule:** All code, comments, commits, and documentation must be written in **English**.
+> However, always **respond to the user in Traditional Chinese (繁體中文)** during conversation.
+
+---
+
 ## Project Purpose
 
 Production-grade quantitative analytics platform for CME index futures (NQ, ES, YM, RTY).
-Built as a portfolio project targeting senior/staff engineer standards at top-tier companies.
+This project is a portfolio piece targeting senior/staff engineer roles at top-tier companies.
 
-See `docs/SPEC.md` for functional requirements and `docs/SYSTEM_DESIGN.md` for architecture details.
+Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
+
+---
 
 ## Development Phases
 
-- **Period 1 (current):** Data collection — TimescaleDB + daily auto-fetch
-- **Period 2:** Strategy research — signals + backtesting
-- **Period 3:** Live trading — IBKR real-time + automated orders
-- **Frontend (parallel):** React/Next.js charting dashboard
+| Phase | Status | Goal |
+|-------|--------|------|
+| Period 1 | 🚧 Active | Data collection: TimescaleDB + daily auto-fetch |
+| Period 2 | 📋 Planned | Strategy research: signals + backtesting |
+| Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
+| Frontend | 📋 Planned | React/Next.js charting dashboard |
 
-## Code Standards (Portfolio / Interview Quality)
+---
 
-### General
-- All commits and code comments in **English**
-- Commits follow **Conventional Commits**: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`
-- No commented-out code, no TODOs left in merged code
-- Every public function/class has a one-line docstring explaining *why*, not *what*
+## Code Standards
 
 ### Python
-- Python **3.12**, strict type hints everywhere (`from __future__ import annotations`)
-- Lint: `ruff check .` — must pass clean
-- Type check: `mypy app/ fetcher/` — strict mode, must pass clean
-- Tests: `pytest` with `pytest-asyncio`, minimum coverage on core logic
-- Use `pydantic` for all data validation and settings
-- Use `sqlalchemy[asyncio]` with async sessions — no sync DB calls in async context
-- Prefer `pathlib.Path` over `os.path`
+- Version: **3.12** with `from __future__ import annotations`
+- **Type hints are mandatory** on every function signature and class attribute
+- **Pydantic v2** for all data validation and settings (`pydantic-settings` for env vars)
+- **SQLAlchemy 2.0** async ORM — no sync DB calls in async context, ever
+- **No raw SQL f-strings** — use ORM or `text()` with bound parameters only
+- Prefer `pathlib.Path` over `os.path`; `datetime.UTC` over `datetime.utcnow()`
+
+### Comments and Docstrings
+- Every public function, class, and module needs a **one-line docstring**
+- Docstrings explain **WHY**, not what — the code itself explains what
+- Inline comments only for non-obvious logic or domain-specific constraints
+- No commented-out code in merged branches
 
 ### API Design
-- Versioned endpoints: `/api/v1/...`
-- All responses typed with Pydantic response models
-- HTTP status codes used correctly (200, 201, 400, 404, 422, 500)
-- CORS configured explicitly, not wildcard in production
-- OpenAPI tags and descriptions on all routes
+- Versioned routes: `/api/v1/...`
+- All request/response bodies typed with Pydantic models
+- Correct HTTP semantics: 200, 201, 400, 404, 422, 500
+- `FastAPI.Query()` for validated query parameters — never trust raw strings
+- OpenAPI tags and descriptions on every route
 
-### Security
-- Secrets only via environment variables — never hardcoded
-- Validate and sanitize all query parameters (use Pydantic + FastAPI Query)
-- SQL via SQLAlchemy ORM only — no raw f-string queries
-- `.env` is in `.gitignore` — always use `.env.example` as template
+### Git Workflow
+- **Conventional Commits**: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`
+- Branch naming: `feat/schema-init`, `fix/roll-detection`, `chore/ci-setup`
+- No direct pushes to `main` — PRs only (enforced by CI)
+- Commit messages in imperative mood: "Add roll_calendar table" not "Added..."
 
-### Testing
-- Unit tests for: adjustment logic, dedup/upsert pipeline, roll detection
-- Integration tests for: API endpoints (use `httpx.AsyncClient`)
-- No real network calls in tests — mock `yfinance` responses
+---
 
-## Architecture Decisions (settled — do not re-discuss)
+## Security Rules (Non-Negotiable)
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Raw storage unit | 1m Unadjusted K-bars only | Single source of truth; all TFs derived |
-| Higher timeframes | TimescaleDB Continuous Aggregates | Auto-consistent, no manual sync |
-| Price adjustment | Applied at query time (not stored) | Raw data is always recoverable |
-| Roll handling | `roll_calendar` table + Ratio Adjustment | Best for technical analysis |
-| Historical source | FirstRate Data CSV (Unadjusted) | 18 years, one-time purchase |
-| Daily updates | yfinance with 7-day overlap | Free, dedup prevents double-writes |
-| Deployment | Railway Pro (API + Fetcher services) | Managed infra, PostgreSQL plugin |
+- Secrets via environment variables only — **never hardcoded**, not even in tests
+- `.env` is git-ignored; `.env.example` documents all vars without real values
+- CORS origins explicitly listed — no wildcard (`*`) in production
+- All DB access via SQLAlchemy ORM to prevent SQL injection
+- Validate and sanitise every external input at the API boundary
+- Docker images: non-root user, minimal base image (`python:3.12-slim`)
 
-## Key Data Facts
+---
 
-- Futures trading hours (CME Globex): Sun 18:00 – Fri 17:00 ET; daily break 17:00–18:00 ET
-- Roll schedule: 3rd Friday of Mar / Jun / Sep / Dec (volume migrates ~2 weeks before expiry)
-- Contract naming: `NQH25` = NQ March 2025; months H=Mar M=Jun U=Sep Z=Dec
-- yfinance known issue: occasional 1–2 day gaps in futures data (GitHub #2635); mitigated by overlap fetch
+## Architecture Decisions (Settled — Do Not Revisit)
 
-## CI/CD
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Raw storage unit | 1m unadjusted OHLCV only | Single source of truth; all TFs auto-derived |
+| Higher timeframes | TimescaleDB Continuous Aggregates | Zero sync logic; always consistent |
+| Price adjustment | Applied at query time, not stored | Raw data stays clean and reusable |
+| Roll handling | `roll_calendar` table + ratio adjustment | Preserves percentage moves for TA |
+| Historical source | FirstRate Data CSV (unadjusted) | 18 years, one-time purchase, clean data |
+| Daily updates | yfinance with 7-day overlap + dedup | Free; overlap guards against gap issues |
+| Deployment | Railway Pro: API + Fetcher services | Managed infra; PostgreSQL plugin |
 
-GitHub Actions at `.github/workflows/ci.yml` runs on every push/PR:
-1. `ruff check` — linting
-2. `mypy` — type checking
-3. `pytest` — unit + integration tests (with ephemeral TimescaleDB service)
-4. Docker build check for both images
+---
 
-All checks must pass before merging to `main`.
+## Domain Knowledge
 
-## Future Frontend (React/Next.js)
+```
+Instruments:   NQ (Nasdaq-100), ES (S&P 500), YM (Dow Jones), RTY (Russell 2000) — all CME
+Trading hours: Sun 18:00 – Fri 17:00 ET; daily settlement break 17:00–18:00 ET
+Roll schedule: 3rd Friday of Mar / Jun / Sep / Dec; volume migrates ~2 weeks before expiry
+Contract codes: H=Mar  M=Jun  U=Sep  Z=Dec  (e.g. NQH25 = NQ March 2025)
+yfinance issue: Occasional 1–2 day gaps in futures data (upstream bug, GitHub #2635)
+                Mitigated by 7-day overlap fetch and gap detection script.
+```
 
-The FastAPI backend is designed to support a charting dashboard:
-- CORS configured via `CORS_ORIGINS` env var
-- `/api/v1/kbars` returns paginated JSON ready for TradingView Lightweight Charts
-- WebSocket endpoint planned for Period 3 real-time feed (`/ws/v1/stream/{instrument}`)
-- Keep response shapes stable — treat the API contract as public once frontend exists
+---
 
-## Commands
+## CI/CD Pipeline
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`:
+
+```
+lint      →  ruff check .
+typecheck →  mypy app/ fetcher/  (strict mode)
+test      →  pytest with ephemeral TimescaleDB service container
+docker    →  docker build for both Dockerfile and Dockerfile.fetcher
+```
+
+All checks must pass before merging. No `--no-verify` bypasses.
+
+---
+
+## Future Frontend (React / Next.js)
+
+Backend is designed API-first to support a charting dashboard:
+- CORS controlled via `CORS_ORIGINS` env var
+- `/api/v1/kbars` returns paginated JSON compatible with TradingView Lightweight Charts
+- WebSocket endpoint planned for Period 3: `GET /ws/v1/stream/{instrument}`
+- API contract must remain stable once the frontend exists — treat it as a public contract
+
+---
+
+## Common Commands
 
 ```bash
-# Start local dev environment
+# Start local dev stack
 docker-compose up -d db
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 
-# Lint + type check
+# Code quality
 ruff check . && mypy app/ fetcher/
+pytest -v --cov
 
-# Tests
-pytest -v
-
-# One-time data bootstrap (after purchasing FirstRate Data)
+# Data management
 python scripts/bootstrap_csv.py --data-dir data/firstrate/
-
-# Check data gaps
 python scripts/verify_coverage.py
-
-# Trigger daily fetch manually
-python fetcher/main.py --once
+python fetcher/main.py --once   # manual trigger of daily fetch
 ```

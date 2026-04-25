@@ -1,164 +1,176 @@
-# 系統規格文件 (SPEC)
+# System Specification (SPEC)
 
-## 1. 系統目標
+## 1. System Goals
 
-建立一個針對 CME 美國指數期貨的量化分析平台，具備：
-- 完整歷史 K 棒數據收集與持續更新
-- 多時間框架技術訊號分析
-- 策略回測引擎
-- 未來擴充至即時分析與自動下單
+Build a production-grade quantitative analytics platform for CME index futures with:
+- Complete historical OHLCV data collection and continuous daily updates
+- Multi-timeframe technical signal analysis
+- Strategy backtesting engine
+- Extensible architecture for live trading automation
 
-## 2. 目標商品
+## 2. Instruments
 
-| 代號 | 全名 | yfinance 代碼 | 交易所 |
-|------|------|--------------|--------|
-| NQ | E-mini Nasdaq-100 | NQ=F | CME |
-| ES | E-mini S&P 500 | ES=F | CME |
-| YM | E-mini Dow Jones | YM=F | CBOT |
-| RTY | E-mini Russell 2000 | RTY=F | CME |
+| Symbol | Full Name | Exchange | yfinance Ticker |
+|--------|-----------|----------|-----------------|
+| NQ | E-mini Nasdaq-100 | CME | `NQ=F` |
+| ES | E-mini S&P 500 | CME | `ES=F` |
+| YM | E-mini Dow Jones | CBOT | `YM=F` |
+| RTY | E-mini Russell 2000 | CME | `RTY=F` |
 
-## 3. 三個開發時期
+## 3. Development Phases
 
-### Period 1：數據收集期（當前目標）
+### Period 1 — Data Collection (Current)
 
-**目標：** 建立穩定、乾淨、持續更新的 1m K 棒資料庫
+**Goal:** Establish a stable, clean, continuously-updated 1m OHLCV database.
 
-**功能需求：**
-- [ ] 一次性匯入 FirstRate Data 歷史 CSV（2008 年起）
-- [ ] 每日自動補齊最新 1m K 棒（收盤後執行）
-- [ ] 數據完整性驗證（偵測缺口、異常值）
-- [ ] 換倉日曆維護（每季自動記錄換倉資訊）
-- [ ] REST API 查詢 K 棒（支援任意時間框架）
-- [ ] 數據覆蓋率查詢 API
+**Functional requirements:**
+- [ ] One-time historical import from FirstRate Data CSV (from 2008)
+- [ ] Daily automated fetch of latest 1m bars (runs after market close)
+- [ ] Data integrity validation: gap detection and anomaly flagging
+- [ ] Contract roll calendar maintenance (auto-record each quarterly roll)
+- [ ] REST API to query bars at any supported timeframe
+- [ ] REST API for data coverage status
 
-**完成條件：**
-- 四個商品皆有 2008 年起完整 1m 數據
-- 每日自動補齊運作穩定超過 2 週
-- 缺口偵測無發現遺漏
-
----
-
-### Period 2：策略研究期（Period 1 完成後）
-
-**目標：** 基於存好的數據開發、驗證交易訊號
-
-**功能需求：**
-- [ ] 技術指標計算 API（EMA, RSI, MACD, ATR, BB, Volume MA）
-- [ ] 多時間框架指標查詢（同時取得 1m/5m/15m/1h/4h/1d 指標）
-- [ ] 訊號定義與儲存（訊號類型、方向、強度、進出場位）
-- [ ] 回測引擎（VectorBT 整合）
-- [ ] 回測報告（總報酬、Sharpe、最大回撤、勝率、獲利因子）
-- [ ] Walk-forward 驗證
-- [ ] 訊號歷史查詢 API
-
-**完成條件：**
-- 至少一個策略完成回測並有可接受的績效指標
-- Sharpe Ratio > 1.0，最大回撤 < 20%
+**Acceptance criteria:**
+- All four instruments have complete 1m data from 2008 to present
+- Daily auto-fetch runs cleanly for 2+ consecutive weeks
+- Gap detection script reports < 0.1% missing bars in normal trading sessions
 
 ---
 
-### Period 3：即時交易期（Period 2 完成後）
+### Period 2 — Strategy Research (after Period 1)
 
-**目標：** 接入即時數據，執行驗證過的策略
+**Goal:** Develop and validate trading signals using stored data.
 
-**功能需求：**
-- [ ] IBKR TWS API 即時 1m 數據接收
-- [ ] 即時訊號偵測（WebSocket 推送）
-- [ ] 自動下單模組（市價單、限價單、止損單）
-- [ ] 倉位管理與風險控管
-- [ ] 即時 P&L 追蹤
-- [ ] Paper Trading 模式（測試用）
-- [ ] 緊急停止機制（Kill Switch）
+**Functional requirements:**
+- [ ] Technical indicator computation API (EMA, RSI, MACD, ATR, Bollinger Bands, Volume MA)
+- [ ] Multi-timeframe indicator queries (retrieve 1m/5m/15m/1h/4h/1d simultaneously)
+- [ ] Signal schema: type, direction, strength, entry/stop/target prices
+- [ ] Backtesting engine via VectorBT integration
+- [ ] Backtest reports: total return, Sharpe ratio, max drawdown, win rate, profit factor
+- [ ] Walk-forward validation
+- [ ] Signal history query API
 
-**完成條件：**
-- Paper Trading 穩定運行 30 天，訊號與實際執行一致
+**Acceptance criteria:**
+- At least one strategy backtested with Sharpe Ratio > 1.0 and max drawdown < 20%
 
 ---
 
-## 4. 非功能性需求
+### Period 3 — Live Trading (after Period 2)
 
-| 需求 | 規格 |
-|------|------|
-| 數據延遲（Period 1-2）| 每日更新，T+0 日 18:00 EST 後完成 |
-| 數據延遲（Period 3）| < 500ms（即時訊號） |
-| 資料庫查詢效能 | 單商品 1 年 1m 數據查詢 < 2 秒 |
-| 系統可用性 | 99%（Railway Pro SLA） |
-| 數據完整性 | 缺口 < 0.1%（期貨正常交易時段） |
-| 部署環境 | Railway Pro（已有帳號） |
+**Goal:** Connect real-time data feed and execute validated strategies.
 
-## 5. 多時間框架分析規格
+**Functional requirements:**
+- [ ] IBKR TWS API integration for real-time 1m bar ingestion
+- [ ] Real-time signal detection with WebSocket push to clients
+- [ ] Automated order management: market, limit, and stop orders
+- [ ] Position sizing and risk controls
+- [ ] Real-time P&L tracking
+- [ ] Paper trading mode for validation
+- [ ] Emergency kill switch (halt all open positions)
 
-```
-分析層級          時間框架      用途
-─────────────────────────────────────────
-環境判斷          Weekly, Daily  市場趨勢、多空環境
-方向確認          4H, 1H         主要趨勢方向、關鍵結構位
-訊號觸發          15m, 5m        進場形態確認
-精確執行          1m             精確進出場位置
-```
+**Acceptance criteria:**
+- Paper trading runs stably for 30 days with signals matching expected execution
 
-**查詢方式：** 所有時間框架由 1m 原始數據推導，不單獨儲存（TimescaleDB Continuous Aggregates）
+---
 
-## 6. API 端點規格
+## 4. Non-Functional Requirements
 
-### Period 1 API
+| Requirement | Target |
+|-------------|--------|
+| Data latency (Period 1–2) | Daily update complete by 18:00 UTC same day |
+| Data latency (Period 3) | < 500 ms end-to-end signal generation |
+| Query performance | Single instrument, 1 year of 1m bars returned in < 2 s |
+| Availability | 99% (Railway Pro SLA) |
+| Data completeness | < 0.1% missing bars in valid trading sessions |
+| Deployment target | Railway Pro (API + Fetcher services, PostgreSQL plugin) |
 
-```
-GET /api/kbars
-  ?instrument=NQ
-  ?timeframe=1m|5m|15m|1h|4h|1d|1w
-  ?start=2024-01-01T00:00:00Z
-  ?end=2024-12-31T23:59:59Z
-  ?adjustment=raw|ratio|absolute   (預設 ratio)
-  回傳：[{ts, open, high, low, close, volume}]
+---
 
-GET /api/coverage
-  ?instrument=NQ|ES|YM|RTY|all
-  回傳：{instrument, earliest, latest, bar_count, gaps}
-
-GET /api/coverage/gaps
-  ?instrument=NQ
-  ?start=2024-01-01
-  ?end=2024-12-31
-  回傳：[{gap_start, gap_end, missing_bars}]
-
-GET /api/roll_calendar
-  ?instrument=NQ
-  ?year=2024
-  回傳：[{old_contract, new_contract, roll_date, price_diff, ratio}]
-```
-
-### Period 2 追加 API
+## 5. Multi-Timeframe Analysis Design
 
 ```
-GET /api/indicators
-  ?instrument=NQ&timeframe=1h
-  ?start=...&end=...
-  ?indicators=ema20,ema60,rsi14,macd,atr14
-
-GET /api/signals
-  ?instrument=NQ&strategy=trend_follow
-  ?start=...&end=...
-
-POST /api/backtest
-  body: {strategy, instrument, params, start, end}
-  回傳：{report_id}
-
-GET /api/backtest/{report_id}
-  回傳：{total_return, sharpe, max_drawdown, win_rate, trades}
+Timeframes          Purpose
+─────────────────────────────────────────────────────
+Weekly, Daily   →   Market regime (trend / range / risk-off)
+4H, 1H          →   Primary trend direction + key structure levels
+15m, 5m         →   Entry signal confirmation
+1m              →   Precise entry / exit positioning
 ```
 
-## 7. 數據品質標準
+All timeframes are derived from the 1m base data via TimescaleDB Continuous Aggregates.
+
+---
+
+## 6. API Specification
+
+### Period 1 Endpoints
 
 ```
-有效的期貨交易時段（CME Globex）：
-  週日 18:00 ~ 週五 17:00 ET
-  每天 17:00 ~ 18:00 ET 為每日結算休市（不計入缺口）
+GET /api/v1/kbars
+  Query params:
+    instrument  : NQ | ES | YM | RTY       (required)
+    timeframe   : 1m|5m|15m|1h|4h|1d|1w   (required)
+    start       : ISO 8601 UTC datetime     (required)
+    end         : ISO 8601 UTC datetime     (required)
+    adjustment  : raw|ratio|absolute        (default: ratio)
+    limit       : int                       (default: 5000, max: 50000)
+    cursor      : str                       (pagination cursor)
+  Response: { data: [{ts, open, high, low, close, volume}], next_cursor }
 
-異常值判斷：
-  單根 K 棒漲跌超過 5% → 標記為疑似異常，人工確認
-  Volume = 0 → 非交易時段，正常
+GET /api/v1/coverage
+  Query params:
+    instrument : NQ | ES | YM | RTY | all  (default: all)
+  Response: [{ instrument, earliest_ts, latest_ts, bar_count, gap_count, last_fetch_ts }]
 
-缺口定義：
-  正常交易時段內連續缺少 2 根以上 1m K 棒
+GET /api/v1/coverage/gaps
+  Query params:
+    instrument : NQ | ES | YM | RTY        (required)
+    start      : date                       (required)
+    end        : date                       (required)
+  Response: [{ gap_start, gap_end, missing_bar_count }]
+
+GET /api/v1/roll-calendar
+  Query params:
+    instrument : NQ | ES | YM | RTY        (required)
+    year       : int                        (optional)
+  Response: [{ old_contract, new_contract, roll_date, price_diff, price_ratio }]
+
+GET /health
+  Response: { status: "ok", db: "ok", version: "1.0.0" }
 ```
+
+### Period 2 Additional Endpoints
+
+```
+GET /api/v1/indicators
+  Query params: instrument, timeframe, start, end
+                indicators (comma-separated: ema20,ema60,rsi14,macd,atr14)
+
+GET /api/v1/signals
+  Query params: instrument, strategy, start, end
+
+POST /api/v1/backtest
+  Body: { strategy_name, instrument, params, start_date, end_date }
+  Response: { report_id }
+
+GET /api/v1/backtest/{report_id}
+  Response: { total_return, sharpe_ratio, max_drawdown, win_rate, profit_factor,
+              trade_count, equity_curve }
+```
+
+---
+
+## 7. Data Quality Standards
+
+### Valid trading sessions (CME Globex)
+- Sunday 18:00 – Friday 17:00 ET
+- Daily settlement break: 17:00–18:00 ET (excluded from gap analysis)
+
+### Anomaly detection rules
+- Single bar price change > 5%  → flagged, requires manual review
+- Volume = 0 during trading hours → flagged
+- Timestamp outside trading session → rejected at ingest
+
+### Gap definition
+- Two or more consecutive missing 1m bars within a valid trading session
