@@ -33,3 +33,16 @@ dockerfile = "Dockerfile.fetcher"
 [services.deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+
+# ── Frontend (Next.js) ─────────────────────────────────────────
+# Read-only browser for the data the API exposes. Talks to `api` over
+# the public internet (not railway.internal) because requests originate
+# in the user's browser; the server-side fetches in Next's app router
+# also use the public URL so a single env var configures both paths.
+[[services]]
+name = "frontend"
+dockerfile = "frontend/Dockerfile"
+
+[services.deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
