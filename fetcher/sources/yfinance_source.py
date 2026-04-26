@@ -89,7 +89,7 @@ class YFinanceSource(DataSource):
                 interval=interval,
                 auto_adjust=True,
                 progress=False,
-                multi_level_column=False,
+                multi_level_index=False,  # yfinance >= 0.2.43 / 1.x
             )
         except Exception:
             logger.exception("yfinance download failed for %s", instrument)
