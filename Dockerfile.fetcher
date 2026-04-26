@@ -13,4 +13,4 @@ COPY scripts/ ./scripts/
 
 USER app
 
-CMD ["python", "fetcher/main.py"]
+CMD ["python", "-m", "fetcher.main"]
