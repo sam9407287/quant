@@ -22,6 +22,9 @@ exclude = ["scripts/", "tests/"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "integration: marks tests as requiring a real PostgreSQL database (deselect with -m 'not integration')",
+]
 
 [tool.coverage.run]
 source = ["app", "fetcher"]
