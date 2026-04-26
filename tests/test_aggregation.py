@@ -124,6 +124,77 @@ class TestRefreshContinuousAggregates:
         assert len(starts) == 1
         assert len(ends) == 1
 
+    @pytest.mark.asyncio
+    @patch("app.db.session.engine")
+    async def test_default_window_covers_at_least_one_weekly_bucket(
+        self, mock_engine: MagicMock
+    ) -> None:
+        """The default window must be ≥ 14 days so kbars_1w always has a full bucket.
+
+        TimescaleDB rejects refreshes whose window doesn't cover at least one
+        complete bucket of the CA's bucket size. For weekly buckets that means
+        the window must span at least one full Monday–Sunday — only ≥ 14 days
+        guarantees that regardless of when the refresh runs.
+        """
+        conn = AsyncMock()
+        conn.execution_options = AsyncMock()
+        captured_params: list[dict] = []
+
+        async def capture(stmt, params=None):
+            if params:
+                captured_params.append(dict(params))
+            return MagicMock()
+
+        conn.execute = capture
+
+        cm = AsyncMock()
+        cm.__aenter__.return_value = conn
+        cm.__aexit__.return_value = None
+        mock_engine.connect.return_value = cm
+
+        await refresh_continuous_aggregates()
+
+        params = captured_params[0]
+        actual_window = params["end"] - params["start"]
+        assert actual_window >= timedelta(days=14)
+
+    @pytest.mark.asyncio
+    @patch("app.db.session.engine")
+    async def test_single_view_failure_does_not_halt_loop(
+        self, mock_engine: MagicMock
+    ) -> None:
+        """If one view's refresh raises, the remaining views must still run.
+
+        Without per-view error handling, a single misaligned bucket (typically
+        kbars_1w) would block every later view in the tuple from refreshing,
+        leaving the API serving stale data until the next background policy run.
+        """
+        conn = AsyncMock()
+        conn.execution_options = AsyncMock()
+        attempted: list[str] = []
+
+        async def execute_with_one_failure(stmt, params=None):
+            sql = str(stmt)
+            for v in CONTINUOUS_AGGREGATE_VIEWS:
+                if v in sql:
+                    attempted.append(v)
+                    if v == "kbars_15m":
+                        raise RuntimeError("simulated bucket alignment error")
+            return MagicMock()
+
+        conn.execute = execute_with_one_failure
+
+        cm = AsyncMock()
+        cm.__aenter__.return_value = conn
+        cm.__aexit__.return_value = None
+        mock_engine.connect.return_value = cm
+
+        # Must not raise — the function swallows per-view failures.
+        await refresh_continuous_aggregates()
+
+        # All six views were attempted, including ones after the failing one.
+        assert attempted == list(CONTINUOUS_AGGREGATE_VIEWS)
+
 
 class TestUpdateAllCoverage:
     @pytest.mark.asyncio

@@ -159,7 +159,7 @@ async def upsert_bars(
 
 
 async def refresh_continuous_aggregates(
-    window: timedelta = timedelta(days=8),
+    window: timedelta = timedelta(days=14),
     engine: AsyncEngine | None = None,
 ) -> None:
     """Force-refresh all higher-timeframe Continuous Aggregates over a window.
@@ -174,8 +174,11 @@ async def refresh_continuous_aggregates(
     connection from the engine pool.
 
     Args:
-        window: How far back to refresh. Defaults to 8 days (covers the
-                7-day fetcher overlap plus a safety margin).
+        window: How far back to refresh. Defaults to 14 days, which is the
+                smallest window that always encloses at least one complete
+                Monday–Sunday bucket of `kbars_1w` regardless of when the
+                refresh runs (an 8-day window can fall entirely inside a
+                single weekly bucket and Timescale rejects it as too small).
         engine: Optional engine override. Tests pass their fixture-bound
                 engine here so the refresh runs on the same event loop as
                 the rest of the test; production callers leave this None
@@ -190,6 +193,7 @@ async def refresh_continuous_aggregates(
     end = datetime.now(UTC)
     start = end - window
 
+    failed: list[str] = []
     async with engine.connect() as conn:
         await conn.execution_options(isolation_level="AUTOCOMMIT")
         for view in CONTINUOUS_AGGREGATE_VIEWS:
@@ -203,12 +207,27 @@ async def refresh_continuous_aggregates(
                 f"CAST(:start AS TIMESTAMPTZ), "
                 f"CAST(:end AS TIMESTAMPTZ))"
             )
-            await conn.execute(stmt, {"start": start, "end": end})
-            logger.debug("Refreshed CA %s over [%s, %s]", view, start, end)
+            try:
+                await conn.execute(stmt, {"start": start, "end": end})
+                logger.debug("Refreshed CA %s over [%s, %s]", view, start, end)
+            except Exception:
+                # One view failing (e.g. window misaligned with its bucket
+                # size) must not stop the others from refreshing. The
+                # background refresh policy declared in schema.sql will
+                # catch up on its own next cycle, so a single miss here
+                # only delays freshness, it doesn't lose data.
+                logger.exception("Refresh failed for CA %s", view)
+                failed.append(view)
 
-    logger.info(
-        "Continuous aggregates refreshed for window [%s, %s]", start, end
-    )
+    if failed:
+        logger.warning(
+            "Continuous aggregate refresh completed with %d failure(s): %s",
+            len(failed), ", ".join(failed),
+        )
+    else:
+        logger.info(
+            "Continuous aggregates refreshed for window [%s, %s]", start, end
+        )
 
 
 async def update_coverage(

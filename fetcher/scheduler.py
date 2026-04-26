@@ -80,11 +80,14 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 summary[instrument] = {"fetched": 0, "inserted": 0, "skipped": 0}
 
     # Refresh CAs once after all instruments are written. CAs cover all
-    # instruments by design, so a single refresh covers everything.
+    # instruments by design, so a single refresh covers everything. We
+    # rely on the pipeline's default window (14 days) instead of deriving
+    # one from fetch_overlap_days — the refresh window must enclose at
+    # least one complete bucket of every CA's bucket size, and weekly
+    # buckets need ≥ 7 days of headroom that fetch_overlap_days cannot
+    # guarantee.
     try:
-        await refresh_continuous_aggregates(
-            window=timedelta(days=_settings.fetch_overlap_days + 1)
-        )
+        await refresh_continuous_aggregates()
     except Exception:
         logger.exception("Continuous aggregate refresh failed")
 
