@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -10,8 +10,8 @@ import pytest
 
 from fetcher.sources.yfinance_source import YFinanceSource
 
-START = datetime(2024, 4, 1, 0, 0, tzinfo=timezone.utc)
-END = datetime(2024, 4, 2, 0, 0, tzinfo=timezone.utc)
+START = datetime(2024, 4, 1, 0, 0, tzinfo=UTC)
+END = datetime(2024, 4, 2, 0, 0, tzinfo=UTC)
 
 
 def _make_yf_response(rows: int = 3) -> pd.DataFrame:

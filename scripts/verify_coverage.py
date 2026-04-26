@@ -15,7 +15,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +29,7 @@ _INSTRUMENTS = ["NQ", "ES", "YM", "RTY"]
 async def print_coverage_summary() -> None:
     """Print the data_coverage table for all instruments."""
     from sqlalchemy import text
+
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
@@ -70,6 +71,7 @@ async def check_gaps(
     Returns the number of gaps found.
     """
     from sqlalchemy import text
+
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
@@ -119,8 +121,8 @@ async def check_gaps(
             ),
             {
                 "instrument": instrument,
-                "start_ts": datetime(start.year, start.month, start.day, tzinfo=timezone.utc),
-                "end_ts": datetime(end.year, end.month, end.day, 23, 59, tzinfo=timezone.utc),
+                "start_ts": datetime(start.year, start.month, start.day, tzinfo=UTC),
+                "end_ts": datetime(end.year, end.month, end.day, 23, 59, tzinfo=UTC),
             },
         )
         gaps = result.fetchall()

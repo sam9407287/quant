@@ -4,9 +4,9 @@ sqlalchemy[asyncio]==2.0.41
 asyncpg==0.30.0
 pydantic==2.11.4
 pydantic-settings==2.9.1
-pandas==2.2.3
+pandas>=2.2.3
 yfinance==0.2.61
-pandas-ta==0.4.71b0
+# pandas-ta added in Period 2 (requires pandas>=2.3.2, conflicts with pinned pandas)
 apscheduler==3.11.0
 python-dotenv==1.1.0
 alembic==1.15.2

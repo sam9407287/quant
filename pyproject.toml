@@ -1,11 +1,16 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "TCH"]
-ignore = ["E501"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint]
+# TCH removed: FastAPI requires real imports for dependency injection,
+# not TYPE_CHECKING-only imports, so the TCH rule produces false positives.
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008"]   # B008: FastAPI Query/Depends calls in defaults are intentional
+
+[tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["T201"]   # allow print() in scripts
+"tests/*"   = ["S101"]   # allow assert in tests
 
 [tool.mypy]
 python_version = "3.12"

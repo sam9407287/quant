@@ -11,7 +11,6 @@ where data comes from. It accepts a normalised DataFrame and applies:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import text

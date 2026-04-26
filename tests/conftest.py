@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
 
 @pytest.fixture
 def sample_bars() -> list[dict]:
     """A minimal set of OHLCV bar dicts for unit tests."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     return [
         {
-            "ts": datetime(2024, 1, d, 9, 0, tzinfo=timezone.utc),
+            "ts": datetime(2024, 1, d, 9, 0, tzinfo=UTC),
             "open": 18000.0 + d * 10,
             "high": 18050.0 + d * 10,
             "low": 17950.0 + d * 10,

@@ -9,7 +9,7 @@ for operational use (e.g. backfilling a missed run).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -37,7 +37,7 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
         Per-instrument summary dict with keys: fetched, inserted, skipped.
     """
     targets = instruments or _settings.fetch_instruments
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=_settings.fetch_overlap_days)
 
     summary: dict[str, dict] = {}

@@ -5,10 +5,8 @@ These tests are pure — no database or network calls.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-
-import pytest
 
 from app.core.adjustment import (
     RollEvent,
@@ -23,7 +21,7 @@ from app.core.adjustment import (
 def _bar(ts: date, o: float, h: float, lo: float, c: float, v: int = 1000) -> dict:
     """Build a minimal bar dict for testing."""
     return {
-        "ts": datetime(ts.year, ts.month, ts.day, 9, 0, tzinfo=timezone.utc),
+        "ts": datetime(ts.year, ts.month, ts.day, 9, 0, tzinfo=UTC),
         "open": o,
         "high": h,
         "low": lo,

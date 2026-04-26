@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.db.session import get_db
-
+from app.main import app
 
 # ---------------------------------------------------------------------------
 # Helpers to build mock DB rows
@@ -35,11 +33,11 @@ def _mock_coverage_row(instrument: str = "NQ", timeframe: str = "1m") -> MagicMo
     row._mapping = {
         "instrument": instrument,
         "timeframe": timeframe,
-        "earliest_ts": datetime(2024, 1, 1, tzinfo=timezone.utc),
-        "latest_ts": datetime(2024, 4, 1, tzinfo=timezone.utc),
+        "earliest_ts": datetime(2024, 1, 1, tzinfo=UTC),
+        "latest_ts": datetime(2024, 4, 1, tzinfo=UTC),
         "bar_count": 100000,
         "gap_count": 0,
-        "last_fetch_ts": datetime(2024, 4, 1, tzinfo=timezone.utc),
+        "last_fetch_ts": datetime(2024, 4, 1, tzinfo=UTC),
         "last_fetch_ok": True,
     }
     return row
@@ -113,7 +111,7 @@ class TestGetKbars:
     def test_valid_request_returns_200(
         self, client: TestClient, mock_db: AsyncMock
     ) -> None:
-        ts = datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc)
+        ts = datetime(2024, 1, 2, 9, 0, tzinfo=UTC)
 
         # First call returns bars; second call (rolls) returns empty
         bars_result = MagicMock()
@@ -140,7 +138,7 @@ class TestGetKbars:
     def test_raw_adjustment_skips_roll_lookup(
         self, client: TestClient, mock_db: AsyncMock
     ) -> None:
-        ts = datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc)
+        ts = datetime(2024, 1, 2, 9, 0, tzinfo=UTC)
         result = MagicMock()
         result.fetchall.return_value = [_mock_bar_row(ts)]
         mock_db.execute.return_value = result
@@ -162,7 +160,7 @@ class TestGetKbars:
     def test_response_schema(
         self, client: TestClient, mock_db: AsyncMock
     ) -> None:
-        ts = datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc)
+        ts = datetime(2024, 1, 2, 9, 0, tzinfo=UTC)
         result = MagicMock()
         result.fetchall.return_value = [_mock_bar_row(ts, 18000.0)]
         mock_db.execute.return_value = result

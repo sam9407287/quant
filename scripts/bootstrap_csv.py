@@ -78,7 +78,7 @@ async def import_instrument(
 ) -> None:
     """Batch-upsert all rows for one instrument into kbars_1m."""
     from app.db.session import AsyncSessionLocal
-    from fetcher.pipeline import upsert_bars, update_coverage
+    from fetcher.pipeline import update_coverage, upsert_bars
 
     total_inserted = 0
     total_skipped = 0
