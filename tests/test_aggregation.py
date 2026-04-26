@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,7 +47,7 @@ class TestAggregateHigherTimeframes:
 
         await aggregate_higher_timeframes(session, "ES")
 
-        for tf, (table, _) in _TIMEFRAME_BUCKETS.items():
+        for _tf, (table, _) in _TIMEFRAME_BUCKETS.items():
             assert any(table in s for s in captured_stmts), \
                 f"Table {table} not found in any SQL statement"
 

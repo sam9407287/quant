@@ -10,12 +10,11 @@ Discord example: https://discord.com/api/webhooks/...
 
 from __future__ import annotations
 
-import logging
-from datetime import UTC, datetime
-
-import urllib.request
-import urllib.error
 import json
+import logging
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
 
 from app.core.config import get_settings
 
