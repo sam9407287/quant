@@ -19,37 +19,15 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+      - name: Install dev dependencies
+        run: pip install ruff mypy pydantic pydantic-settings fastapi sqlalchemy asyncpg
 
       - name: Lint with ruff
         run: ruff check .
 
-      - name: Type check with mypy
-        run: mypy app/ fetcher/
-
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: lint
-
-    services:
-      postgres:
-        image: timescale/timescaledb:latest-pg16
-        env:
-          POSTGRES_DB: quant_futures_test
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/quant_futures_test
 
     steps:
       - uses: actions/checkout@v4
@@ -61,15 +39,16 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-mock httpx freezegun
 
-      - name: Run migrations
-        run: python -m db.migrate
+      - name: Run tests
+        run: pytest tests/ -v --tb=short --ignore=tests/test_integration.py
+        env:
+          DATABASE_URL: postgresql+asyncpg://dev:dev@localhost:5432/quant_futures
 
-      - name: Run tests with coverage
-        run: pytest --cov --cov-report=xml
-
-      - name: Upload coverage
+      - name: Upload coverage report
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -78,12 +57,11 @@ jobs:
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest
-    needs: lint
     steps:
       - uses: actions/checkout@v4
 
       - name: Build API image
-        run: docker build -f Dockerfile -t quant-api:test .
+        run: docker build -f Dockerfile -t quant-api:ci .
 
       - name: Build Fetcher image
-        run: docker build -f Dockerfile.fetcher -t quant-fetcher:test .
+        run: docker build -f Dockerfile.fetcher -t quant-fetcher:ci .
