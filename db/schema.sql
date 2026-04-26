@@ -1,11 +1,10 @@
 -- =============================================================
--- Quant Futures — TimescaleDB Schema
+-- Quant Futures — PostgreSQL Schema (no TimescaleDB required)
+-- TimescaleDB can be added later when data volume demands it.
 -- =============================================================
 
-CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-
 -- =============================================================
--- 1m raw OHLCV bars — the single source of truth
+-- 1m raw OHLCV bars — single source of truth
 -- =============================================================
 CREATE TABLE IF NOT EXISTS kbars_1m (
     instrument  TEXT           NOT NULL,
@@ -15,145 +14,31 @@ CREATE TABLE IF NOT EXISTS kbars_1m (
     low         NUMERIC(12, 4) NOT NULL,
     close       NUMERIC(12, 4) NOT NULL,
     volume      BIGINT         NOT NULL,
-    source      TEXT           NOT NULL DEFAULT 'yfinance'
+    source      TEXT           NOT NULL DEFAULT 'yfinance',
+    PRIMARY KEY (instrument, ts)
 );
 
-SELECT create_hypertable(
-    'kbars_1m', 'ts',
-    chunk_time_interval => INTERVAL '1 week',
-    if_not_exists => TRUE
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uix_kbars_1m
-    ON kbars_1m (instrument, ts);
-
+-- Fast lookups by instrument + time range
 CREATE INDEX IF NOT EXISTS idx_kbars_1m_lookup
     ON kbars_1m (instrument, ts DESC);
 
 -- =============================================================
--- Derived timeframes via Continuous Aggregates
+-- Higher timeframes — pre-aggregated for fast API reads
+-- Refreshed by the fetcher after each daily ingest.
 -- =============================================================
+CREATE TABLE IF NOT EXISTS kbars_5m  (LIKE kbars_1m INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS kbars_15m (LIKE kbars_1m INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS kbars_1h  (LIKE kbars_1m INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS kbars_4h  (LIKE kbars_1m INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS kbars_1d  (LIKE kbars_1m INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS kbars_1w  (LIKE kbars_1m INCLUDING ALL);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_5m
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('5 minutes', ts) AS ts,
-    first(open, ts)              AS open,
-    max(high)                    AS high,
-    min(low)                     AS low,
-    last(close, ts)              AS close,
-    sum(volume)                  AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('5 minutes', ts)
-WITH NO DATA;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_15m
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('15 minutes', ts) AS ts,
-    first(open, ts)               AS open,
-    max(high)                     AS high,
-    min(low)                      AS low,
-    last(close, ts)               AS close,
-    sum(volume)                   AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('15 minutes', ts)
-WITH NO DATA;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_1h
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('1 hour', ts) AS ts,
-    first(open, ts)           AS open,
-    max(high)                 AS high,
-    min(low)                  AS low,
-    last(close, ts)           AS close,
-    sum(volume)               AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('1 hour', ts)
-WITH NO DATA;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_4h
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('4 hours', ts) AS ts,
-    first(open, ts)            AS open,
-    max(high)                  AS high,
-    min(low)                   AS low,
-    last(close, ts)            AS close,
-    sum(volume)                AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('4 hours', ts)
-WITH NO DATA;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_1d
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('1 day', ts) AS ts,
-    first(open, ts)          AS open,
-    max(high)                AS high,
-    min(low)                 AS low,
-    last(close, ts)          AS close,
-    sum(volume)              AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('1 day', ts)
-WITH NO DATA;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS kbars_1w
-WITH (timescaledb.continuous) AS
-SELECT
-    instrument,
-    time_bucket('1 week', ts) AS ts,
-    first(open, ts)           AS open,
-    max(high)                 AS high,
-    min(low)                  AS low,
-    last(close, ts)           AS close,
-    sum(volume)               AS volume
-FROM kbars_1m
-GROUP BY instrument, time_bucket('1 week', ts)
-WITH NO DATA;
-
--- Refresh policies — keep last 2 days current, refresh hourly
-SELECT add_continuous_aggregate_policy('kbars_5m',
-    start_offset    => INTERVAL '2 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
-
-SELECT add_continuous_aggregate_policy('kbars_15m',
-    start_offset    => INTERVAL '2 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
-
-SELECT add_continuous_aggregate_policy('kbars_1h',
-    start_offset    => INTERVAL '3 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
-
-SELECT add_continuous_aggregate_policy('kbars_4h',
-    start_offset    => INTERVAL '7 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
-
-SELECT add_continuous_aggregate_policy('kbars_1d',
-    start_offset    => INTERVAL '14 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
-
-SELECT add_continuous_aggregate_policy('kbars_1w',
-    start_offset    => INTERVAL '30 days',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
+CREATE INDEX IF NOT EXISTS idx_kbars_5m_lookup  ON kbars_5m  (instrument, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_kbars_15m_lookup ON kbars_15m (instrument, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_kbars_1h_lookup  ON kbars_1h  (instrument, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_kbars_4h_lookup  ON kbars_4h  (instrument, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_kbars_1d_lookup  ON kbars_1d  (instrument, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_kbars_1w_lookup  ON kbars_1w  (instrument, ts DESC);
 
 -- =============================================================
 -- Contract roll calendar
@@ -167,11 +52,9 @@ CREATE TABLE IF NOT EXISTS roll_calendar (
     roll_ts       TIMESTAMPTZ,
     price_diff    NUMERIC(12, 4),
     price_ratio   NUMERIC(10, 8),
-    created_at    TIMESTAMPTZ    NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    UNIQUE (instrument, roll_date)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS uix_roll_calendar
-    ON roll_calendar (instrument, roll_date);
 
 -- =============================================================
 -- Data coverage tracking
@@ -189,7 +72,7 @@ CREATE TABLE IF NOT EXISTS data_coverage (
     PRIMARY KEY (instrument, timeframe)
 );
 
--- Seed initial coverage rows so upserts always have a target
+-- Seed initial coverage rows
 INSERT INTO data_coverage (instrument, timeframe)
 SELECT i.instrument, t.timeframe
 FROM
