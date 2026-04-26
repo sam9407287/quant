@@ -69,6 +69,7 @@ Weekly / Daily  →  Market regime (trend / range / risk-off)
 | **Period 1** | 🚧 In Progress | Data collection: historical ingestion + daily auto-update |
 | **Period 2** | 📋 Planned | Strategy research: signal development + backtesting |
 | **Period 3** | 📋 Planned | Live trading: IBKR real-time feed + automated order execution |
+| **Frontend** | 🌱 Seeded | Next.js dashboard for browsing ingested data ([`frontend/`](frontend/)) |
 
 ---
 

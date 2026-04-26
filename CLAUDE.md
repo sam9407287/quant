@@ -34,7 +34,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 | Period 1 | 🚧 Active | Data collection: TimescaleDB + daily auto-fetch |
 | Period 2 | 📋 Planned | Strategy research: signals + backtesting |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
-| Frontend | 📋 Planned | React/Next.js charting dashboard |
+| Frontend | 🌱 Seeded | Next.js 14 + lightweight-charts dashboard in `frontend/` |
 
 ---
 
