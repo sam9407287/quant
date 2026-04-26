@@ -1,6 +1,19 @@
 [build]
 builder = "DOCKERFILE"
 
+# ── TimescaleDB ────────────────────────────────────────────────
+# Self-hosted on Railway as a Docker service. A persistent volume must
+# be attached to /var/lib/postgresql/data via the Railway dashboard;
+# without one, all data is lost on redeploy. Schema and seed are baked
+# into the image and run once on first boot (empty data dir only).
+[[services]]
+name = "timescaledb"
+dockerfile = "db/Dockerfile"
+
+[services.deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
 # ── API Service ────────────────────────────────────────────────
 [[services]]
 name = "api"
