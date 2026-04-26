@@ -13,6 +13,12 @@ eggs/
 lib/
 lib64/
 parts/
+
+# `lib/` above is intended for Python virtualenvs / build outputs.
+# Re-include the frontend's source `lib/` directory which holds the API
+# client and shared TypeScript types.
+!frontend/lib/
+!frontend/lib/**
 sdist/
 var/
 wheels/
