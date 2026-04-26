@@ -13,26 +13,27 @@ A production-grade quantitative analysis platform for CME index futures (NQ, ES,
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Railway Platform                      │
-│                                                          │
-│  ┌───────────────┐       ┌──────────────────────────┐  │
-│  │  API Service  │       │     Fetcher Service      │  │
-│  │  (FastAPI)    │       │  (APScheduler Worker)    │  │
-│  │               │       │                          │  │
-│  │  REST + WS    │       │  Daily 18:00 UTC         │  │
-│  │  OpenAPI docs │       │  yfinance → TimescaleDB  │  │
-│  └───────┬───────┘       └────────────┬─────────────┘  │
-│          │                            │                  │
-│          └──────────────┬─────────────┘                  │
-│                         │                                │
-│            ┌────────────▼────────────┐                   │
-│            │       TimescaleDB       │                   │
-│            │  kbars_1m (hypertable)  │                   │
-│            │  Continuous Aggregates  │                   │
-│            │  → 5m/15m/1h/4h/1d/1w  │                   │
-│            └─────────────────────────┘                   │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       Railway Platform                        │
+│                                                               │
+│  ┌───────────────┐         ┌──────────────────────────┐     │
+│  │  API Service  │         │     Fetcher Service      │     │
+│  │  (FastAPI)    │         │  (APScheduler Worker)    │     │
+│  │  REST + WS    │         │  Daily 18:00 UTC         │     │
+│  │  OpenAPI docs │         │  yfinance → kbars_1m     │     │
+│  └───────┬───────┘         └────────────┬─────────────┘     │
+│          │                              │                     │
+│          └──────────────┬───────────────┘                     │
+│                         │  railway.internal (private network) │
+│            ┌────────────▼────────────────────┐                │
+│            │  TimescaleDB Service            │                │
+│            │  (timescale/timescaledb:pg16)   │                │
+│            │  ─ kbars_1m (hypertable)        │                │
+│            │  ─ Continuous Aggregates        │                │
+│            │    → 5m/15m/1h/4h/1d/1w        │                │
+│            │  ─ Persistent volume mounted    │                │
+│            └─────────────────────────────────┘                │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 **Core principle:** Only 1-minute bars are stored as raw data. All higher timeframes are derived automatically via TimescaleDB Continuous Aggregates — ensuring perpetual consistency across all timeframes.
@@ -83,7 +84,7 @@ Weekly / Daily  →  Market regime (trend / range / risk-off)
 | Backtesting | VectorBT (Period 2) | Vectorized engine, millions of bars in seconds |
 | Indicators | pandas-ta | 90+ indicators, pure Python |
 | Broker API | ib_insync / IBKR TWS (Period 3) | Official async Python wrapper for IBKR |
-| Deployment | Railway Pro | Managed infrastructure, PostgreSQL plugin |
+| Deployment | Railway Pro | API + Fetcher + self-hosted TimescaleDB Docker services |
 | CI/CD | GitHub Actions | Lint → test → Docker build on every PR |
 
 ---
@@ -222,14 +223,25 @@ curl "http://localhost:8000/api/v1/coverage?instrument=all"
 
 ## Deployment
 
-This project is deployed on [Railway](https://railway.app) with two services:
+This project is deployed on [Railway](https://railway.app) as three services
+in a single project, all configured via `railway.toml`:
 
-| Service | Description |
-|---------|-------------|
-| `api` | FastAPI REST server |
-| `fetcher` | Daily data ingestion worker |
+| Service | Build | Description |
+|---------|-------|-------------|
+| `timescaledb` | `db/Dockerfile` | PostgreSQL 16 + TimescaleDB extension. Schema and seed are baked into the image and applied on first boot. A persistent volume must be attached to `/var/lib/postgresql/data` via the Railway dashboard. |
+| `api` | `Dockerfile` | FastAPI REST server. |
+| `fetcher` | `Dockerfile.fetcher` | Daily data ingestion worker. |
 
-Environment variables are managed via Railway's dashboard. The PostgreSQL plugin with TimescaleDB extension is used as the database.
+The API and fetcher reach the database over Railway's private network at
+`timescaledb.railway.internal:5432`, so the database is not exposed
+publicly. Connection strings, instrument lists, and webhook URLs are all
+provided via Railway environment variables (see `.env.example` for the
+full list).
+
+See [ADR-001](docs/SYSTEM_DESIGN.md#adr-001-self-hosted-timescaledb-on-railway-not-railways-pg-plugin-not-timescale-cloud)
+for why this self-hosted topology was chosen over Railway's PostgreSQL
+plugin (no `timescaledb` extension) and over a managed Timescale Cloud
+instance (cost and cross-region latency).
 
 ---
 

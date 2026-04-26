@@ -90,7 +90,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 | Roll handling | `roll_calendar` table + ratio adjustment | Preserves percentage moves for TA |
 | Historical source | FirstRate Data CSV (unadjusted) | 18 years, one-time purchase, clean data |
 | Daily updates | yfinance with 7-day overlap + dedup | Free; overlap guards against gap issues |
-| Deployment | Railway Pro: API + Fetcher services | Managed infra; PostgreSQL plugin |
+| Deployment | Railway Pro: API + Fetcher + self-hosted TimescaleDB Docker services | Single-region co-location; Railway PG plugin lacks the `timescaledb` extension (see ADR-001) |
 
 ---
 

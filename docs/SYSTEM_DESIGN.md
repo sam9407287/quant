@@ -329,10 +329,15 @@ API_SECRET_KEY=<openssl rand -hex 32>
 
 | Service | Dockerfile | Role |
 |---------|-----------|------|
+| `timescaledb` | `db/Dockerfile` | PostgreSQL 16 + TimescaleDB; persistent volume on `/var/lib/postgresql/data` |
 | `api` | `Dockerfile` | FastAPI REST server |
 | `fetcher` | `Dockerfile.fetcher` | Daily data ingestion worker |
 
-Railway's PostgreSQL plugin is used with the TimescaleDB extension enabled post-provision.
+All three services live in the same Railway project. `api` and `fetcher`
+reach the database over Railway's private network at
+`timescaledb.railway.internal:5432`; the database itself is not exposed
+publicly. See ADR-001 for the rationale behind self-hosting versus using
+Railway's PostgreSQL plugin or a managed Timescale Cloud instance.
 
 ### Docker Images
 
@@ -423,7 +428,7 @@ Definition of Done for Period 1:
 
 ## 10. Architecture Decision Records (ADR)
 
-### ADR-001: TimescaleDB on Timescale Cloud, not on Railway PostgreSQL plugin
+### ADR-001: Self-hosted TimescaleDB on Railway (not Railway's PG plugin, not Timescale Cloud)
 
 **Status:** Accepted (supersedes the brief excursion through plain PostgreSQL)
 
@@ -455,8 +460,16 @@ but had three problems:
   because PostgreSQL `date_trunc` only takes named units.
 * The implementation is essentially an inferior reimplementation of CAs.
 
-**Decision.** Move PostgreSQL to **Timescale Cloud** (managed) and connect
-both Railway services to it via `DATABASE_URL`. Use:
+**Decision.** Run TimescaleDB **as a Railway Docker service** alongside
+the API and fetcher, replacing Railway's managed PostgreSQL plugin. The
+service is built from `db/Dockerfile`, which extends
+`timescale/timescaledb:latest-pg16` and copies `schema.sql` and
+`seed_roll_calendar.sql` into `/docker-entrypoint-initdb.d/`. A persistent
+volume is attached to `/var/lib/postgresql/data` so data survives
+redeploys. All three services live in the same Railway project; the
+API and fetcher reach the database over Railway's private network at
+`timescaledb.railway.internal:5432`. Schema-level decisions stay the
+same:
 
 * `kbars_1m` as a hypertable, 7-day chunks
 * Six Continuous Aggregates with hourly refresh policies
@@ -467,13 +480,26 @@ The fetcher loses `aggregate_higher_timeframes()`. A new, much smaller
 start, end)` once per CA after each daily fetch — this is just a
 "force-fresh-now" call; the policy keeps things current between fetches.
 
-**Why managed (Timescale Cloud) and not self-hosted on Railway.**
-Self-hosting TSDB as a Docker service on Railway is feasible but adds
-operational surface area (volume backups, version upgrades, security
-patches) for no compounding benefit. Splitting compute (Railway) and DB
-(Timescale Cloud) also matches the canonical AWS RDS + ECS / GCP Cloud
-SQL + Cloud Run pattern, which is the reference architecture that
-production-grade systems converge on.
+**Why self-host on Railway, not Timescale Cloud (managed).** Two factors
+tip this over to self-hosting for the current scope:
+
+* **Cost.** Timescale Cloud's permanent free tier is restricted to
+  `us-east-1` only and lacks connection pooling and replication; the
+  cheapest paid plan in any other region starts at ~$30/month. The
+  Railway Pro subscription is already paid for, so adding a third Docker
+  service is effectively free compute.
+* **Co-location.** Compute and storage can sit in the same Railway region
+  (asia-southeast1), so writes from the fetcher don't pay cross-region
+  latency on every `INSERT`. With Timescale Cloud's free tier this
+  would be ~200 ms round-trip from Singapore to us-east-1.
+
+The trade-off is operational surface area (volume backups, version
+upgrades, security patches), which is the standard reason production
+deployments eventually graduate to a managed service. For a portfolio
+project with reproducible source data, that surface area is acceptable;
+when this hardens into something with irreplaceable state, the path to
+managed RDS / Cloud SQL / Timescale Cloud is straightforward — only
+`DATABASE_URL` changes.
 
 **Consequences.**
 
@@ -484,21 +510,35 @@ production-grade systems converge on.
 * CI test job switched from `postgres:16` to `timescale/timescaledb:latest-pg16`.
 * `docker-compose` for local dev was already on the timescale image, so no
   workflow change for developers.
-* Costs: free tier of Timescale Cloud is sufficient through Period 1; an
-  upgrade is a Period 2 concern when historical bootstrap lands.
+* `db/Dockerfile` is the production image; `db/schema.sql` is the single
+  source of truth applied by both local docker-compose and the Railway
+  build.
 
 **Trade-offs accepted.**
 
-* Two cloud accounts to manage instead of one.
-* Cross-region latency between Railway (asia-southeast1) and Timescale
-  Cloud must be sized when picking the TSDB region — keep them in the same
-  region or geographically close.
+* No managed backups: Railway volumes are persistent but not snapshotted.
+  Acceptable here because raw data is reproducible from yfinance and the
+  FirstRate Data CSVs. Mitigation: a periodic `pg_dump` cron job lands in
+  Period 2 once historical bootstrap data is loaded.
+* Manual upgrades: bumping the TimescaleDB image is a deploy of
+  `db/Dockerfile`, gated by reading the upstream changelog. Major-version
+  PG upgrades (e.g. pg16 → pg17) require a `pg_dumpall` / restore cycle.
+* `/docker-entrypoint-initdb.d/` only runs on an empty data dir, so schema
+  changes after first boot must be applied out-of-band via `psql`. This
+  is the same constraint as any production PostgreSQL deployment and is
+  what a proper migration tool (Alembic) will fix in Period 2.
 * `CALL refresh_continuous_aggregate(...)` cannot run inside a transaction,
   so the fetcher opens a dedicated AUTOCOMMIT connection. This is a known
   TSDB constraint, documented inline.
 
-**Reversibility.** The schema and pipeline could be reverted to the manual
-aggregation model in a single revert commit if Timescale Cloud became
-unavailable; the API layer (`/api/v1/kbars`) makes no assumption that
-higher-timeframe sources are CAs versus tables.
+**Reversibility.** Two independent reversal paths exist:
+
+1. *Pipeline level* — the schema and pipeline could be reverted to the
+   manual aggregation model in a single revert commit if TimescaleDB
+   became unavailable; the API layer (`/api/v1/kbars`) makes no
+   assumption that higher-timeframe sources are CAs versus tables.
+2. *Hosting level* — moving to a managed offering (Timescale Cloud,
+   AWS RDS with the timescaledb extension, etc.) is a one-line change
+   to `DATABASE_URL` plus a `pg_dump` / restore. No application code
+   changes.
 
