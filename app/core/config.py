@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Security
     api_secret_key: str = "changeme"
 
+    # Notifications (optional — leave empty to disable)
+    notify_webhook_url: str = ""
+
     @field_validator("fetch_instruments", mode="before")
     @classmethod
     def split_instruments(cls, v: str | list[str]) -> list[str]:

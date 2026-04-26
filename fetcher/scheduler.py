@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
+from fetcher.notifier import notify
 from fetcher.pipeline import (
     aggregate_higher_timeframes,
     flag_anomalies,
@@ -73,6 +74,10 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 logger.exception("Daily fetch failed for %s", instrument)
                 await update_all_coverage(session, instrument, fetch_ok=False)
                 summary[instrument] = {"fetched": 0, "inserted": 0, "skipped": 0}
+
+    duration = (datetime.now(UTC) - end + timedelta(days=_settings.fetch_overlap_days)).total_seconds()
+    all_ok = all(s["fetched"] > 0 for s in summary.values())
+    notify(summary, success=all_ok, duration_seconds=abs(duration))
 
     logger.info("Daily fetch complete: %s", summary)
     return summary
