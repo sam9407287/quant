@@ -21,7 +21,7 @@ class TestRunDailyFetch:
             patch("fetcher.scheduler.validate") as mock_validate,
             patch("fetcher.scheduler.flag_anomalies") as mock_flag,
             patch("fetcher.scheduler.upsert_bars", new_callable=AsyncMock) as mock_upsert,
-            patch("fetcher.scheduler.aggregate_higher_timeframes", new_callable=AsyncMock),
+            patch("fetcher.scheduler.refresh_continuous_aggregates", new_callable=AsyncMock),
             patch("fetcher.scheduler.update_all_coverage", new_callable=AsyncMock),
         ):
             # Build a tiny valid DataFrame
@@ -52,6 +52,7 @@ class TestRunDailyFetch:
         with (
             patch("fetcher.scheduler._source") as mock_source,
             patch("fetcher.scheduler.AsyncSessionLocal") as mock_session_cls,
+            patch("fetcher.scheduler.refresh_continuous_aggregates", new_callable=AsyncMock),
             patch("fetcher.scheduler.update_all_coverage", new_callable=AsyncMock),
         ):
             mock_source.fetch.side_effect = RuntimeError("network failure")
@@ -73,7 +74,7 @@ class TestRunDailyFetch:
             patch("fetcher.scheduler.validate") as mock_validate,
             patch("fetcher.scheduler.flag_anomalies") as mock_flag,
             patch("fetcher.scheduler.upsert_bars", new_callable=AsyncMock) as mock_upsert,
-            patch("fetcher.scheduler.aggregate_higher_timeframes", new_callable=AsyncMock),
+            patch("fetcher.scheduler.refresh_continuous_aggregates", new_callable=AsyncMock),
             patch("fetcher.scheduler.update_all_coverage", new_callable=AsyncMock),
         ):
             df = pd.DataFrame({

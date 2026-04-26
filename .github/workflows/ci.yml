@@ -25,10 +25,9 @@ jobs:
       - name: Lint with ruff
         run: ruff check .
 
-  test:
+  unit-test:
     name: Unit Tests
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -43,16 +42,47 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov pytest-mock httpx freezegun
 
-      - name: Run tests
-        run: pytest tests/ -v --tb=short --ignore=tests/test_integration.py
-        env:
-          DATABASE_URL: postgresql+asyncpg://dev:dev@localhost:5432/quant_futures
+      - name: Run unit tests (no DB required)
+        run: pytest tests/ -m "not integration" -v --tb=short
 
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v4
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB: quant_futures_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/quant_futures_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-mock httpx
+
+      - name: Run integration tests
+        run: pytest tests/test_integration.py -v --tb=short -m integration
 
   docker-build:
     name: Docker Build Check

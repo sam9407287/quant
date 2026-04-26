@@ -18,8 +18,8 @@ from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from fetcher.notifier import notify
 from fetcher.pipeline import (
-    aggregate_higher_timeframes,
     flag_anomalies,
+    refresh_continuous_aggregates,
     update_all_coverage,
     upsert_bars,
     validate,
@@ -32,14 +32,19 @@ _source = YFinanceSource()
 
 
 async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dict]:
-    """Fetch, persist, and aggregate bars for all configured instruments.
+    """Fetch and persist bars for all configured instruments, then refresh CAs.
 
-    Pipeline per instrument:
-      1. Fetch 7-day overlap of 1m bars from yfinance
-      2. Validate and flag anomalies
-      3. Upsert into kbars_1m (dedup via ON CONFLICT DO NOTHING)
-      4. Aggregate kbars_1m → 5m/15m/1h/4h/1d/1w tables
-      5. Refresh data_coverage for all timeframes
+    Pipeline:
+      Per instrument
+        1. Fetch 7-day overlap of 1m bars from yfinance
+        2. Validate and flag anomalies
+        3. Upsert into kbars_1m (dedup via ON CONFLICT DO NOTHING)
+        4. Refresh data_coverage for all timeframes
+      After loop
+        5. Refresh all higher-timeframe Continuous Aggregates once
+
+    Higher-timeframe rollup is owned by TimescaleDB Continuous Aggregates;
+    we only force a fresh refresh so the API sees the new data immediately.
 
     Args:
         instruments: Override the instrument list from settings (useful for tests).
@@ -63,7 +68,6 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 inserted, skipped = await upsert_bars(
                     session, df, instrument, source=_source.source_name
                 )
-                await aggregate_higher_timeframes(session, instrument)
                 await update_all_coverage(session, instrument, fetch_ok=True)
                 summary[instrument] = {
                     "fetched": len(df),
@@ -74,6 +78,15 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 logger.exception("Daily fetch failed for %s", instrument)
                 await update_all_coverage(session, instrument, fetch_ok=False)
                 summary[instrument] = {"fetched": 0, "inserted": 0, "skipped": 0}
+
+    # Refresh CAs once after all instruments are written. CAs cover all
+    # instruments by design, so a single refresh covers everything.
+    try:
+        await refresh_continuous_aggregates(
+            window=timedelta(days=_settings.fetch_overlap_days + 1)
+        )
+    except Exception:
+        logger.exception("Continuous aggregate refresh failed")
 
     duration = (datetime.now(UTC) - end + timedelta(days=_settings.fetch_overlap_days)).total_seconds()
     all_ok = all(s["fetched"] > 0 for s in summary.values())

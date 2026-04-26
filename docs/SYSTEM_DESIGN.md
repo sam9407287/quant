@@ -418,3 +418,87 @@ Definition of Done for Period 1:
   □ Two consecutive weeks of automated daily fetches with zero failures
   □ Coverage API shows gap_count = 0 for all instruments
 ```
+
+---
+
+## 10. Architecture Decision Records (ADR)
+
+### ADR-001: TimescaleDB on Timescale Cloud, not on Railway PostgreSQL plugin
+
+**Status:** Accepted (supersedes the brief excursion through plain PostgreSQL)
+
+**Context.** This system stores OHLCV bars: append-mostly, time-ordered, queried
+exclusively by time range. Two characteristics dominate:
+
+1. The 1m hypertable will accumulate ~50M rows per instrument over 18 years
+   (200M+ across all four). On vanilla PostgreSQL, B-tree index maintenance
+   and full-table aggregation become a real cost.
+2. Six higher timeframes (5m / 15m / 1h / 4h / 1d / 1w) must always stay
+   consistent with the 1m source. Hand-rolling this either means daily full
+   recomputation (slow) or hand-written incremental sync (fragile).
+
+Both problems are exactly what TimescaleDB hypertables and Continuous
+Aggregates solve. Hypertables auto-partition by time so writes stay flat in
+cost; CAs maintain the higher-timeframe rollups incrementally and query like
+ordinary views.
+
+**The detour.** An earlier iteration migrated to plain PostgreSQL because
+Railway's managed PostgreSQL plugin does not include the `timescaledb`
+extension (commit `8ae8873`). The pipeline grew a hand-written
+`aggregate_higher_timeframes()` function — a 50-line `INSERT ... SELECT
+GROUP BY date_trunc()` block per timeframe, run on every fetch. This worked
+but had three problems:
+
+* It rebuilds aggregates from scratch each run; cost grows linearly with
+  history size, not with new data.
+* Sub-hour buckets (5m / 15m / 4h) needed `EXTRACT(EPOCH ...)` arithmetic
+  because PostgreSQL `date_trunc` only takes named units.
+* The implementation is essentially an inferior reimplementation of CAs.
+
+**Decision.** Move PostgreSQL to **Timescale Cloud** (managed) and connect
+both Railway services to it via `DATABASE_URL`. Use:
+
+* `kbars_1m` as a hypertable, 7-day chunks
+* Six Continuous Aggregates with hourly refresh policies
+* Compression policy on chunks older than 30 days (segmentby instrument)
+
+The fetcher loses `aggregate_higher_timeframes()`. A new, much smaller
+`refresh_continuous_aggregates()` calls `refresh_continuous_aggregate(view,
+start, end)` once per CA after each daily fetch — this is just a
+"force-fresh-now" call; the policy keeps things current between fetches.
+
+**Why managed (Timescale Cloud) and not self-hosted on Railway.**
+Self-hosting TSDB as a Docker service on Railway is feasible but adds
+operational surface area (volume backups, version upgrades, security
+patches) for no compounding benefit. Splitting compute (Railway) and DB
+(Timescale Cloud) also matches the canonical AWS RDS + ECS / GCP Cloud
+SQL + Cloud Run pattern, which is the reference architecture that
+production-grade systems converge on.
+
+**Consequences.**
+
+* Schema is more declarative: 6 `CREATE MATERIALIZED VIEW ... WITH
+  (timescaledb.continuous)` statements replace the entire manual aggregation
+  module.
+* `app/api/kbars.py` is unchanged — CAs are queried as ordinary views.
+* CI test job switched from `postgres:16` to `timescale/timescaledb:latest-pg16`.
+* `docker-compose` for local dev was already on the timescale image, so no
+  workflow change for developers.
+* Costs: free tier of Timescale Cloud is sufficient through Period 1; an
+  upgrade is a Period 2 concern when historical bootstrap lands.
+
+**Trade-offs accepted.**
+
+* Two cloud accounts to manage instead of one.
+* Cross-region latency between Railway (asia-southeast1) and Timescale
+  Cloud must be sized when picking the TSDB region — keep them in the same
+  region or geographically close.
+* `CALL refresh_continuous_aggregate(...)` cannot run inside a transaction,
+  so the fetcher opens a dedicated AUTOCOMMIT connection. This is a known
+  TSDB constraint, documented inline.
+
+**Reversibility.** The schema and pipeline could be reverted to the manual
+aggregation model in a single revert commit if Timescale Cloud became
+unavailable; the API layer (`/api/v1/kbars`) makes no assumption that
+higher-timeframe sources are CAs versus tables.
+
