@@ -16,7 +16,13 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
-from fetcher.pipeline import flag_anomalies, update_coverage, upsert_bars, validate
+from fetcher.pipeline import (
+    aggregate_higher_timeframes,
+    flag_anomalies,
+    update_all_coverage,
+    upsert_bars,
+    validate,
+)
 from fetcher.sources.yfinance_source import YFinanceSource
 
 logger = logging.getLogger(__name__)
@@ -25,10 +31,14 @@ _source = YFinanceSource()
 
 
 async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dict]:
-    """Fetch and persist the latest 1m bars for all configured instruments.
+    """Fetch, persist, and aggregate bars for all configured instruments.
 
-    Uses a 7-day overlap window to guard against yfinance gaps; the
-    upsert deduplication ensures overlapping bars are silently skipped.
+    Pipeline per instrument:
+      1. Fetch 7-day overlap of 1m bars from yfinance
+      2. Validate and flag anomalies
+      3. Upsert into kbars_1m (dedup via ON CONFLICT DO NOTHING)
+      4. Aggregate kbars_1m → 5m/15m/1h/4h/1d/1w tables
+      5. Refresh data_coverage for all timeframes
 
     Args:
         instruments: Override the instrument list from settings (useful for tests).
@@ -52,7 +62,8 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 inserted, skipped = await upsert_bars(
                     session, df, instrument, source=_source.source_name
                 )
-                await update_coverage(session, instrument, timeframe="1m", fetch_ok=True)
+                await aggregate_higher_timeframes(session, instrument)
+                await update_all_coverage(session, instrument, fetch_ok=True)
                 summary[instrument] = {
                     "fetched": len(df),
                     "inserted": inserted,
@@ -60,7 +71,7 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
                 }
             except Exception:
                 logger.exception("Daily fetch failed for %s", instrument)
-                await update_coverage(session, instrument, timeframe="1m", fetch_ok=False)
+                await update_all_coverage(session, instrument, fetch_ok=False)
                 summary[instrument] = {"fetched": 0, "inserted": 0, "skipped": 0}
 
     logger.info("Daily fetch complete: %s", summary)
@@ -71,7 +82,6 @@ def build_scheduler() -> AsyncIOScheduler:
     """Construct and configure the APScheduler instance."""
     scheduler = AsyncIOScheduler(timezone="UTC")
 
-    # Parse cron expression from settings (default: weekdays at 18:00 UTC)
     cron_parts = _settings.fetch_cron.split()
     trigger = CronTrigger(
         minute=cron_parts[0],
@@ -84,8 +94,8 @@ def build_scheduler() -> AsyncIOScheduler:
         run_daily_fetch,
         trigger=trigger,
         id="daily_fetch",
-        name="Daily 1m bar ingestion",
-        max_instances=1,       # prevent overlapping runs
+        name="Daily 1m bar ingestion + aggregation",
+        max_instances=1,
         misfire_grace_time=3600,
     )
 

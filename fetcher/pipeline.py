@@ -1,11 +1,12 @@
-"""Data ingestion pipeline: validate, deduplicate, and persist bars.
+"""Data ingestion pipeline: validate, deduplicate, persist, and aggregate bars.
 
 The pipeline layer is intentionally kept free of business logic about
 where data comes from. It accepts a normalised DataFrame and applies:
   1. Schema validation — reject rows missing required fields.
   2. Anomaly flagging — log bars with extreme price moves (> 5%).
   3. Upsert — INSERT … ON CONFLICT DO NOTHING to deduplicate safely.
-  4. Coverage update — refresh the data_coverage tracking table.
+  4. Aggregation — recompute higher timeframe tables from kbars_1m.
+  5. Coverage update — refresh the data_coverage tracking table.
 """
 
 from __future__ import annotations
@@ -18,11 +19,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-# Columns required in every incoming DataFrame
 _REQUIRED_COLS = {"ts", "open", "high", "low", "close", "volume"}
-
-# Single bar price change threshold above which we emit a warning
 _ANOMALY_THRESHOLD = 0.05
+
+# Timeframe → (target table, SQL bucket expression)
+# PostgreSQL date_trunc only supports fixed unit strings, so sub-hour buckets
+# use arithmetic on epoch seconds instead.
+_TIMEFRAME_BUCKETS: dict[str, tuple[str, str]] = {
+    "5m":  ("kbars_5m",  "epoch_300"),    # 300  seconds
+    "15m": ("kbars_15m", "epoch_900"),    # 900  seconds
+    "1h":  ("kbars_1h",  "hour"),
+    "4h":  ("kbars_4h",  "epoch_14400"), # 14400 seconds
+    "1d":  ("kbars_1d",  "day"),
+    "1w":  ("kbars_1w",  "week"),
+}
 
 
 def validate(df: pd.DataFrame) -> pd.DataFrame:
@@ -42,11 +52,8 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"DataFrame missing required columns: {missing}")
 
     before = len(df)
-    # Drop rows with null OHLCV
     df = df.dropna(subset=list(_REQUIRED_COLS))
-    # Drop zero-volume rows (outside trading hours)
     df = df[df["volume"] > 0]
-    # Ensure ts is UTC-aware
     if df["ts"].dt.tz is None:
         df = df.copy()
         df["ts"] = df["ts"].dt.tz_localize("UTC")
@@ -61,12 +68,11 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def flag_anomalies(df: pd.DataFrame, instrument: str) -> pd.DataFrame:
-    """Log bars whose price change vs. previous bar exceeds the threshold."""
+    """Log bars whose close-to-close change exceeds the anomaly threshold."""
     if df.empty:
         return df
     pct_change = df["close"].pct_change().abs()
-    anomalies = df[pct_change > _ANOMALY_THRESHOLD]
-    for _, row in anomalies.iterrows():
+    for _, row in df[pct_change > _ANOMALY_THRESHOLD].iterrows():
         logger.warning(
             "Anomaly detected in %s at %s: close=%s (%.1f%% move)",
             instrument,
@@ -84,9 +90,6 @@ async def upsert_bars(
     source: str,
 ) -> tuple[int, int]:
     """Bulk-upsert bars into kbars_1m, skipping duplicates.
-
-    Uses a server-side COPY-equivalent via executemany for performance,
-    falling back to INSERT … ON CONFLICT DO NOTHING for correctness.
 
     Args:
         session:    Active async SQLAlchemy session.
@@ -134,6 +137,65 @@ async def upsert_bars(
     return inserted, skipped
 
 
+async def aggregate_higher_timeframes(
+    session: AsyncSession,
+    instrument: str,
+) -> None:
+    """Recompute all higher timeframe tables from kbars_1m for one instrument.
+
+    Uses INSERT … ON CONFLICT DO UPDATE so that re-running is idempotent:
+    existing bars are refreshed with the latest aggregated values, and new
+    bars are inserted. This handles partial bars (e.g. the current day's
+    incomplete 1d bar) correctly — they are updated on each run.
+
+    Args:
+        session:    Active async SQLAlchemy session.
+        instrument: e.g. 'NQ'.
+    """
+    for tf, (table, bucket) in _TIMEFRAME_BUCKETS.items():
+        # Build the bucket expression based on the bucket type.
+        # Sub-hour buckets use epoch-seconds arithmetic; others use date_trunc.
+        if bucket.startswith("epoch_"):
+            secs = int(bucket.split("_")[1])
+            bucket_expr = (
+                f"TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM ts) / {secs}) * {secs})"
+                f" AT TIME ZONE 'UTC'"
+            )
+            group_expr = bucket_expr
+        else:
+            bucket_expr = f"date_trunc('{bucket}', ts)"
+            group_expr  = f"date_trunc('{bucket}', ts)"
+
+        stmt = text(
+            f"""
+            INSERT INTO {table} (instrument, ts, open, high, low, close, volume, source)
+            SELECT
+                instrument,
+                {bucket_expr}                                   AS ts,
+                (array_agg(open  ORDER BY ts ASC))[1]          AS open,
+                MAX(high)                                       AS high,
+                MIN(low)                                        AS low,
+                (array_agg(close ORDER BY ts DESC))[1]         AS close,
+                SUM(volume)                                     AS volume,
+                'aggregate'                                     AS source
+            FROM kbars_1m
+            WHERE instrument = :instrument
+            GROUP BY instrument, {group_expr}
+            ON CONFLICT (instrument, ts) DO UPDATE SET
+                open   = EXCLUDED.open,
+                high   = EXCLUDED.high,
+                low    = EXCLUDED.low,
+                close  = EXCLUDED.close,
+                volume = EXCLUDED.volume
+            """  # noqa: S608
+        )
+        await session.execute(stmt, {"instrument": instrument})
+        await session.commit()
+        logger.debug("Aggregated 1m → %s for %s", tf, instrument)
+
+    logger.info("%s: higher timeframe aggregation complete", instrument)
+
+
 async def update_coverage(
     session: AsyncSession,
     instrument: str,
@@ -141,8 +203,11 @@ async def update_coverage(
     fetch_ok: bool = True,
 ) -> None:
     """Refresh the data_coverage row for the given instrument/timeframe."""
+    # Determine source table for bar count
+    table = "kbars_1m" if timeframe == "1m" else f"kbars_{timeframe}"
+
     stmt = text(
-        """
+        f"""
         INSERT INTO data_coverage
             (instrument, timeframe, earliest_ts, latest_ts, bar_count,
              last_fetch_ts, last_fetch_ok, updated_at)
@@ -155,7 +220,7 @@ async def update_coverage(
             NOW(),
             :fetch_ok,
             NOW()
-        FROM kbars_1m
+        FROM {table}
         WHERE instrument = :instrument
         ON CONFLICT (instrument, timeframe) DO UPDATE SET
             earliest_ts   = EXCLUDED.earliest_ts,
@@ -164,10 +229,21 @@ async def update_coverage(
             last_fetch_ts = EXCLUDED.last_fetch_ts,
             last_fetch_ok = EXCLUDED.last_fetch_ok,
             updated_at    = NOW()
-        """
+        """  # noqa: S608
     )
     await session.execute(
         stmt,
         {"instrument": instrument, "timeframe": timeframe, "fetch_ok": fetch_ok},
     )
     await session.commit()
+
+
+async def update_all_coverage(
+    session: AsyncSession,
+    instrument: str,
+    fetch_ok: bool = True,
+) -> None:
+    """Refresh data_coverage for all timeframes of one instrument."""
+    all_timeframes = ["1m", "5m", "15m", "1h", "4h", "1d", "1w"]
+    for tf in all_timeframes:
+        await update_coverage(session, instrument, timeframe=tf, fetch_ok=fetch_ok)
