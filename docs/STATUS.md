@@ -29,7 +29,7 @@
 |---------|-------|-----------|---------------|--------|
 | `timescaledb` | `db/Dockerfile` | — | `timescaledb.railway.internal:5432` | 🟢 |
 | `api` (`quant`) | `Dockerfile` | `https://quant-production-d645.up.railway.app` | — | 🟢 |
-| `fetcher` | `Dockerfile.fetcher` | — | — | 🟢 (scheduler idle, fires 18:00 UTC weekdays) |
+| `fetcher` | `Dockerfile.fetcher` | — | — | 🟢 (scheduler idle, fires 00:00 UTC (Taiwan 08:00) weekdays) |
 | `frontend` | `frontend/Dockerfile` | `https://frontend-production-d637.up.railway.app` | — | 🟢 |
 | `Postgres` (legacy plugin) | template | — | `postgres.railway.internal:5432` | ⚠ orphan, scheduled for decommission |
 
@@ -205,8 +205,8 @@ set it, trigger a redeploy.
 
 | # | Item | When | How |
 |---|------|------|-----|
-| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After tomorrow's 18:00 UTC fetch confirms the new pipeline is solid | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
-| 📋 | Re-watch the next scheduled fetch | After 18:00 UTC weekday | `railway logs --service fetcher --since 1h`, then check `latest_ts` on dashboard |
+| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After tomorrow's 00:00 UTC (Taiwan 08:00) fetch confirms the new pipeline is solid | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
+| 📋 | Re-watch the next scheduled fetch | After 00:00 UTC (Taiwan 08:00) weekday | `railway logs --service fetcher --since 1h`, then check `latest_ts` on dashboard |
 
 Everything else is in `# 7. Optimisation ideas` (not blocking).
 
@@ -371,7 +371,7 @@ If you (Sam) start a new conversation and want it productive immediately:
 2. **Tell the assistant to read this file first**:
    *"Read `docs/STATUS.md` before doing anything else."*
 3. **Hand it the immediate next task**:
-   - "Watch tomorrow's 18:00 UTC fetch — pull the fetcher logs, confirm
+   - "Watch tomorrow's 00:00 UTC (Taiwan 08:00) fetch — pull the fetcher logs, confirm
      all 4 instruments fetched, then update §2 / §6 of `docs/STATUS.md`."
    - Or: "Decommission the legacy Postgres plugin per Task #19 in
      `docs/STATUS.md`."

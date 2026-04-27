@@ -24,7 +24,7 @@ A production-grade quantitative analysis platform for CME index futures (NQ, ES,
 │  └────────────────┘        ┌───────────────┐  ┌───────────────┐   │
 │                            │  API Service  │  │   Fetcher     │   │
 │                            │  (FastAPI)    │  │  (APScheduler)│   │
-│                            │  REST + WS    │  │  Daily 18:00Z │   │
+│                            │  REST + WS    │  │  Daily 00:00Z │   │
 │                            │  OpenAPI docs │  │  yfinance →   │   │
 │                            └───────┬───────┘  └───────┬───────┘   │
 │                                    │                  │           │

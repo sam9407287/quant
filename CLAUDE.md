@@ -74,12 +74,12 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 - 4 Railway services (`timescaledb`, `api`, `fetcher`, `frontend`) — all 🟢
 - API: `https://quant-production-d645.up.railway.app`
 - Dashboard: `https://frontend-production-d637.up.railway.app`
-- Daily fetcher scheduled: 18:00 UTC weekdays
+- Daily fetcher scheduled: 00:00 UTC weekdays (= 08:00 Taiwan time, Mon–Fri)
 - End-to-end pipeline verified: yfinance → kbars_1m → 6 Continuous Aggregates → API → Next.js charts
 
 **Pending**
 
-- ⏳ Watch tomorrow's 18:00 UTC scheduled fetch
+- ⏳ Watch the next 00:00 UTC (Taiwan 08:00) scheduled fetch
 - 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
 
 **Known landmines (see `docs/STATUS.md` §5 for full root causes)**
