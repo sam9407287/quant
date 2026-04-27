@@ -4,6 +4,8 @@ const links = [
   { href: "/", label: "Dashboard" },
   { href: "/coverage", label: "Coverage" },
   { href: "/chart", label: "Chart" },
+  { href: "/research", label: "Research" },
+  { href: "/research/experiments", label: "Experiments" },
 ];
 
 export function Nav() {
