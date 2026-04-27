@@ -31,10 +31,37 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 
 | Phase | Status | Goal |
 |-------|--------|------|
-| Period 1 | 🚧 Active | Data collection: TimescaleDB + daily auto-fetch |
+| Period 1 | ✅ Deployed | Data collection: TimescaleDB + daily auto-fetch |
 | Period 2 | 📋 Planned | Strategy research: signals + backtesting |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
-| Frontend | 🌱 Seeded | Next.js 14 + lightweight-charts dashboard in `frontend/` |
+| Frontend | ✅ Deployed | Next.js 14 + lightweight-charts dashboard in `frontend/` |
+
+---
+
+## Current Snapshot (last updated 2026-04-27)
+
+> **For full state, runbook, problem log, and session-handoff tips, read
+> `docs/STATUS.md` first.** This section is just the index.
+
+**Live**
+
+- 4 Railway services (`timescaledb`, `api`, `fetcher`, `frontend`) — all 🟢
+- API: `https://quant-production-d645.up.railway.app`
+- Dashboard: `https://frontend-production-d637.up.railway.app`
+- Daily fetcher scheduled: 18:00 UTC weekdays
+- End-to-end pipeline verified: yfinance → kbars_1m → 6 Continuous Aggregates → API → Next.js charts
+
+**Pending**
+
+- ⏳ Watch tomorrow's 18:00 UTC scheduled fetch
+- 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
+
+**Known landmines (see `docs/STATUS.md` §5 for full root causes)**
+
+- Railway service-name trailing whitespace breaks CLI name lookups
+- Root `.gitignore` `lib/` rule swallows non-Python `lib/` dirs (carve-out exists for `frontend/lib/`)
+- Railway PG plugin lacks the `timescaledb` extension — never migrate back
+- Railway's built-in DB browser does not render for self-hosted DBs (use `railway connect` or the frontend)
 
 ---
 
