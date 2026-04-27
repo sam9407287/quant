@@ -18,6 +18,32 @@ When writing code, you are not prototyping — you are building production softw
 
 ---
 
+## Operating Mode (autonomy)
+
+Sam prefers velocity over politeness. **Proceed without asking on routine
+work** — pick a reasonable default, act, and keep going. Do not pause to
+confirm each step of a task already given.
+
+**Take action without asking:**
+- Read / edit / write files; run tests, linters, type checks, builds
+- Stage, commit, and push to `origin/main` (commit messages still need full
+  background rationale)
+- Set Railway env vars, redeploy services, pull logs
+- Install dev dependencies inside `frontend/` or the Python venv
+- Update `docs/STATUS.md` and other scratch docs as state changes
+
+**Still confirm before:**
+- Destructive operations on shared systems (deleting Railway services or
+  volumes, dropping tables, force-pushing, deleting branches, `rm -rf`)
+- Spending money, rotating credentials, sending external messages
+- Genuinely ambiguous forks where two paths have meaningfully different
+  cost — then ask **one** tight question with two options, then act
+
+When torn between "ask" and "act", prefer act and state what was done so
+Sam can redirect. A reversible wrong action is cheaper than a round-trip.
+
+---
+
 ## Project Purpose
 
 Production-grade quantitative analytics platform for CME index futures (NQ, ES, YM, RTY).
