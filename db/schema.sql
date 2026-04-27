@@ -16,6 +16,11 @@
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
+-- pgcrypto provides gen_random_uuid(), used by the experiments table
+-- introduced in ADR-002 (ML workbench). It is shipped with PostgreSQL
+-- contrib and present in the timescale/timescaledb image.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- =============================================================
 -- 1m raw OHLCV bars — hypertable, single source of truth
 -- =============================================================
@@ -226,3 +231,24 @@ FROM
     (VALUES ('NQ'), ('ES'), ('YM'), ('RTY')) AS i(instrument),
     (VALUES ('1m'), ('5m'), ('15m'), ('1h'), ('4h'), ('1d'), ('1w')) AS t(timeframe)
 ON CONFLICT DO NOTHING;
+
+-- =============================================================
+-- ML experiment tracking (ADR-002)
+-- =============================================================
+-- Every wizard run on /api/v1/ml/train inserts one row here. The full
+-- request config and the resulting metrics live as JSONB so the schema
+-- doesn't need to evolve with every new feature or model the workbench
+-- learns to handle. Plain table (no hypertable) — query patterns are
+-- "list latest N" and "fetch by id", not time-bucketed scans.
+CREATE TABLE IF NOT EXISTS experiments (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    config      JSONB       NOT NULL,
+    metrics     JSONB       NOT NULL,
+    artefacts   JSONB,
+    runtime_ms  INT         NOT NULL,
+    notes       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS experiments_created_at_idx
+    ON experiments (created_at DESC);

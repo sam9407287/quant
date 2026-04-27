@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import coverage, kbars, roll_calendar
+from app.api import coverage, kbars, ml, roll_calendar
 from app.core.config import get_settings
 
 _settings = get_settings()
@@ -35,13 +35,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET"],
+    # POST is needed for /api/v1/ml/train; OPTIONS is the CORS preflight.
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 app.include_router(kbars.router)
 app.include_router(coverage.router)
 app.include_router(roll_calendar.router)
+app.include_router(ml.router)
 
 
 @app.get("/health", tags=["system"], summary="Health check")
