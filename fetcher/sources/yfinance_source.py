@@ -17,17 +17,10 @@ from datetime import datetime
 import pandas as pd
 import yfinance as yf
 
+from app.core.instruments import get_yfinance_ticker
 from fetcher.sources.base import DataSource
 
 logger = logging.getLogger(__name__)
-
-# Maps our internal symbol to the yfinance continuous-contract ticker
-_TICKER_MAP: dict[str, str] = {
-    "NQ": "NQ=F",
-    "ES": "ES=F",
-    "YM": "YM=F",
-    "RTY": "RTY=F",
-}
 
 # Maps timeframe strings to yfinance interval parameter
 _INTERVAL_MAP: dict[str, str] = {
@@ -67,7 +60,7 @@ class YFinanceSource(DataSource):
             DataFrame[ts, open, high, low, close, volume] with UTC-aware ts,
             or empty DataFrame if download fails or returns no data.
         """
-        ticker = _TICKER_MAP.get(instrument.upper())
+        ticker = get_yfinance_ticker(instrument)
         if ticker is None:
             logger.error("Unknown instrument %r; no yfinance ticker mapped", instrument)
             return self._empty_df()

@@ -152,10 +152,16 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 ## Domain Knowledge
 
 ```
-Instruments:   NQ (Nasdaq-100), ES (S&P 500), YM (Dow Jones), RTY (Russell 2000) — all CME
+Instruments:   9 symbols across 3 asset classes — see app/core/instruments.py
+                 Equity indices (CME/CBOT): NQ, ES, YM, RTY
+                 Metals (COMEX):            GC (Gold), SI (Silver), HG (Copper)
+                 Energy (NYMEX):            CL (Crude Oil), NG (Natural Gas)
 Trading hours: Sun 18:00 – Fri 17:00 ET; daily settlement break 17:00–18:00 ET
-Roll schedule: 3rd Friday of Mar / Jun / Sep / Dec; volume migrates ~2 weeks before expiry
-Contract codes: H=Mar  M=Jun  U=Sep  Z=Dec  (e.g. NQH25 = NQ March 2025)
+Roll schedule (equity): 3rd Friday of Mar / Jun / Sep / Dec; volume migrates ~2 weeks pre-expiry
+                Contract codes: H=Mar  M=Jun  U=Sep  Z=Dec  (e.g. NQH25 = NQ March 2025)
+                Metals roll bimonthly (GC: G/J/M/Q/V/Z); energy rolls monthly. roll_calendar
+                table is currently seeded only for equity indices — adjustment=raw is the
+                only meaningful choice for metals/energy until those datasets land.
 yfinance issue: Occasional 1–2 day gaps in futures data (upstream bug, GitHub #2635)
                 Mitigated by 7-day overlap fetch and gap detection script.
 ```

@@ -228,7 +228,11 @@ CREATE TABLE IF NOT EXISTS data_coverage (
 INSERT INTO data_coverage (instrument, timeframe)
 SELECT i.instrument, t.timeframe
 FROM
-    (VALUES ('NQ'), ('ES'), ('YM'), ('RTY')) AS i(instrument),
+    (VALUES
+        ('NQ'), ('ES'), ('YM'), ('RTY'),   -- equity indices
+        ('GC'), ('SI'), ('HG'),             -- metals (COMEX)
+        ('CL'), ('NG')                      -- energy (NYMEX)
+    ) AS i(instrument),
     (VALUES ('1m'), ('5m'), ('15m'), ('1h'), ('4h'), ('1d'), ('1w')) AS t(timeframe)
 ON CONFLICT DO NOTHING;
 

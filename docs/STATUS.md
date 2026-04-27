@@ -12,6 +12,9 @@
 
 - **Period 1 (data collection) is online.** Four Railway services deployed,
   daily fetcher scheduled, dashboard reachable on the public internet.
+- **9 instruments tracked** across three asset classes — equity indices
+  (NQ/ES/YM/RTY), metals (GC/SI/HG), energy (CL/NG). Single source of
+  truth in `app/core/instruments.py`.
 - **Data path verified end-to-end.** yfinance → kbars_1m → 6 Continuous
   Aggregates → API → Next.js charts.
 - **Period 1.5 — ML workbench backend is live.** `/api/v1/ml/train`

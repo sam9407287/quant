@@ -13,9 +13,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-# Mirrors app/api/kbars.py — kept as separate Literals so the workbench
-# can evolve independently of the kbars endpoint surface.
-Instrument = Literal["NQ", "ES", "YM", "RTY"]
+from app.core.instruments import Symbol as Instrument
+
 Timeframe = Literal["1m", "5m", "15m", "1h", "4h", "1d", "1w"]
 
 TaskType = Literal["regression", "classification", "clustering"]

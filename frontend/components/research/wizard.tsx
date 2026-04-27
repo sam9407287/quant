@@ -14,7 +14,11 @@ import {
   trainModel,
 } from "@/lib/ml";
 import type { Instrument, Timeframe } from "@/lib/types";
-import { INSTRUMENTS, TIMEFRAMES } from "@/lib/types";
+import {
+  ASSET_CLASS_LABEL,
+  INSTRUMENTS_BY_CLASS,
+  TIMEFRAMES,
+} from "@/lib/types";
 import { ResultPanel } from "./result-panel";
 
 const TARGET_OPTIONS_BY_TASK: Record<TaskType, TargetKind[]> = {
@@ -136,22 +140,31 @@ export function ResearchWizard() {
       <section className={SECTION_CLASS}>
         <SectionHeader idx={1} title="Data" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
+          <div className="lg:col-span-2">
             <label className={LABEL_CLASS}>Instrument</label>
-            <div className="flex gap-1">
-              {INSTRUMENTS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setInstrument(s)}
-                  className={`${PILL_BTN} flex-1 ${
-                    instrument === s
-                      ? "bg-accent-blue text-white"
-                      : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
-                  }`}
-                >
-                  {s}
-                </button>
+            <div className="space-y-1.5">
+              {(["equity_index", "metal", "energy"] as const).map((cls) => (
+                <div key={cls} className="flex items-center gap-1.5">
+                  <span className="w-16 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+                    {ASSET_CLASS_LABEL[cls]}
+                  </span>
+                  <div className="flex flex-1 gap-1">
+                    {INSTRUMENTS_BY_CLASS[cls].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setInstrument(s)}
+                        className={`${PILL_BTN} flex-1 ${
+                          instrument === s
+                            ? "bg-accent-blue text-white"
+                            : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>

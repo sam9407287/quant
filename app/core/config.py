@@ -47,9 +47,13 @@ class Settings(BaseSettings):
     # complex types — without it the comma-separated env-file form (used by
     # local .env) would be rejected before our validator runs. Railway sets
     # the same vars as JSON arrays; both shapes are normalised below.
-    fetch_instruments: Annotated[list[str], NoDecode] = ["NQ", "ES", "YM", "RTY"]
+    fetch_instruments: Annotated[list[str], NoDecode] = [
+        "NQ", "ES", "YM", "RTY",   # equity indices
+        "GC", "SI", "HG",           # metals
+        "CL", "NG",                 # energy
+    ]
     fetch_overlap_days: int = 7
-    fetch_cron: str = "0 18 * * 1-5"
+    fetch_cron: str = "0 0 * * 1-5"
 
     # API
     api_host: str = "0.0.0.0"

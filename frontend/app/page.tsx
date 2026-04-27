@@ -2,7 +2,11 @@ import Link from "next/link";
 
 import { fetchCoverage } from "@/lib/api";
 import type { CoverageRecord } from "@/lib/types";
-import { INSTRUMENTS } from "@/lib/types";
+import {
+  ASSET_CLASS_LABEL,
+  INSTRUMENT_META,
+  INSTRUMENTS_BY_CLASS,
+} from "@/lib/types";
 
 // Refresh on every request so the dashboard reflects the most recent fetcher
 // run. The backend is fast enough that pre-rendering buys nothing.
@@ -41,32 +45,45 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {INSTRUMENTS.map((sym) => {
-          const r = latest1m.get(sym);
-          return (
-            <Link
-              key={sym}
-              href={{ pathname: "/chart", query: { instrument: sym } }}
-              className="rounded-lg border border-border bg-bg-panel p-5 transition hover:border-border-strong hover:bg-bg-hover"
-            >
-              <div className="font-mono text-xs uppercase tracking-wider text-zinc-500">
-                {sym}
-              </div>
-              <div className="mt-2 text-2xl font-semibold">
-                {r ? r.bar_count.toLocaleString() : "—"}
-              </div>
-              <div className="text-xs text-zinc-500">1m bars stored</div>
-              <div className="mt-3 text-xs text-zinc-400">
-                Latest:{" "}
-                <span className="font-mono">
-                  {r?.latest_ts ? r.latest_ts.replace("T", " ").slice(0, 16) : "—"}
-                </span>
-              </div>
-            </Link>
-          );
-        })}
-      </section>
+      {(["equity_index", "metal", "energy"] as const).map((cls) => (
+        <section key={cls} className="space-y-3">
+          <h2 className="font-mono text-xs uppercase tracking-wider text-zinc-500">
+            {ASSET_CLASS_LABEL[cls]}
+          </h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {INSTRUMENTS_BY_CLASS[cls].map((sym) => {
+              const r = latest1m.get(sym);
+              const meta = INSTRUMENT_META[sym];
+              return (
+                <Link
+                  key={sym}
+                  href={{ pathname: "/chart", query: { instrument: sym } }}
+                  className="rounded-lg border border-border bg-bg-panel p-5 transition hover:border-border-strong hover:bg-bg-hover"
+                >
+                  <div className="flex items-baseline justify-between">
+                    <span className="font-mono text-sm font-semibold uppercase tracking-wider text-zinc-100">
+                      {sym}
+                    </span>
+                    <span className="text-xs text-zinc-500">{meta.name}</span>
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">
+                    {r ? r.bar_count.toLocaleString() : "—"}
+                  </div>
+                  <div className="text-xs text-zinc-500">1m bars stored</div>
+                  <div className="mt-3 text-xs text-zinc-400">
+                    Latest:{" "}
+                    <span className="font-mono">
+                      {r?.latest_ts
+                        ? r.latest_ts.replace("T", " ").slice(0, 16)
+                        : "—"}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      ))}
 
       <section className="rounded-lg border border-border bg-bg-panel p-6">
         <h2 className="text-lg font-semibold">Quick links</h2>

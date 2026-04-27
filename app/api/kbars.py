@@ -15,6 +15,7 @@ from app.core.adjustment import (
     apply_absolute_adjustment,
     apply_ratio_adjustment,
 )
+from app.core.instruments import Symbol as Instrument
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/v1", tags=["kbars"])
@@ -30,7 +31,6 @@ _TIMEFRAME_SOURCE: dict[str, str] = {
     "1w":  "kbars_1w",
 }
 
-Instrument = Literal["NQ", "ES", "YM", "RTY"]
 Timeframe = Literal["1m", "5m", "15m", "1h", "4h", "1d", "1w"]
 Adjustment = Literal["raw", "ratio", "absolute"]
 

@@ -47,12 +47,29 @@ A production-grade quantitative analysis platform for CME index futures (NQ, ES,
 
 ## Instruments
 
-| Symbol | Full Name | Exchange | yfinance Ticker |
-|--------|-----------|----------|-----------------|
-| NQ | E-mini Nasdaq-100 | CME | `NQ=F` |
-| ES | E-mini S&P 500 | CME | `ES=F` |
-| YM | E-mini Dow Jones | CBOT | `YM=F` |
-| RTY | E-mini Russell 2000 | CME | `RTY=F` |
+The platform tracks 9 futures across three asset classes. The
+authoritative list lives in `app/core/instruments.py` — adding a new
+symbol is a single registry entry and a Literal extension.
+
+| Symbol | Full Name | Asset Class | Exchange | yfinance Ticker |
+|--------|-----------|-------------|----------|-----------------|
+| NQ  | E-mini Nasdaq-100   | Equity Index | CME    | `NQ=F`  |
+| ES  | E-mini S&P 500      | Equity Index | CME    | `ES=F`  |
+| YM  | E-mini Dow Jones    | Equity Index | CBOT   | `YM=F`  |
+| RTY | E-mini Russell 2000 | Equity Index | CME    | `RTY=F` |
+| GC  | Gold                | Metal        | COMEX  | `GC=F`  |
+| SI  | Silver              | Metal        | COMEX  | `SI=F`  |
+| HG  | Copper              | Metal        | COMEX  | `HG=F`  |
+| CL  | Crude Oil (WTI)     | Energy       | NYMEX  | `CL=F`  |
+| NG  | Natural Gas         | Energy       | NYMEX  | `NG=F`  |
+
+**Roll calendar caveat:** the `roll_calendar` table is currently seeded
+only for the equity index futures (quarterly H/M/U/Z rolls). Metals and
+energy use materially different roll cadences (bimonthly for GC/SI/HG,
+monthly for CL/NG); their roll datasets will be added when the
+research workflows actually need ratio/absolute-adjusted prices for
+those symbols. Until then, `adjustment=raw` is the only meaningful
+choice for metal/energy queries.
 
 ---
 

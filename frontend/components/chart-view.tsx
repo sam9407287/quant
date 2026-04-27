@@ -12,7 +12,11 @@ import {
 
 import { fetchKBars } from "@/lib/api";
 import type { Instrument, KBar, Timeframe } from "@/lib/types";
-import { INSTRUMENTS, TIMEFRAMES } from "@/lib/types";
+import {
+  ASSET_CLASS_LABEL,
+  INSTRUMENTS_BY_CLASS,
+  TIMEFRAMES,
+} from "@/lib/types";
 
 interface Props {
   initialInstrument: Instrument;
@@ -154,22 +158,27 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg-panel p-3">
-        <div className="flex gap-1">
-          {INSTRUMENTS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setInstrument(s)}
-              className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
-                instrument === s
-                  ? "bg-accent-blue text-white"
-                  : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        {(["equity_index", "metal", "energy"] as const).map((cls) => (
+          <div key={cls} className="flex items-center gap-1">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+              {ASSET_CLASS_LABEL[cls]}
+            </span>
+            {INSTRUMENTS_BY_CLASS[cls].map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setInstrument(s)}
+                className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
+                  instrument === s
+                    ? "bg-accent-blue text-white"
+                    : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        ))}
         <div className="h-5 w-px bg-border" />
         <div className="flex gap-1">
           {TIMEFRAMES.map((t) => (
