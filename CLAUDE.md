@@ -58,6 +58,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 | Phase | Status | Goal |
 |-------|--------|------|
 | Period 1 | ✅ Deployed | Data collection: TimescaleDB + daily auto-fetch |
+| Period 1.5 | 🚧 Backend live | No-code ML workbench (ADR-002); front-end pending |
 | Period 2 | 📋 Planned | Strategy research: signals + backtesting |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
 | Frontend | ✅ Deployed | Next.js 14 + lightweight-charts dashboard in `frontend/` |
@@ -81,6 +82,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 
 - ⏳ Watch the next 00:00 UTC (Taiwan 08:00) scheduled fetch
 - 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
+- 🛠 Build ML workbench front-end (`/research` wizard, result charts, experiments list) — backend `/api/v1/ml/train` already live; see `docs/ADR-002-ml-workbench.md` and `app/ml/schemas.py`
 
 **Known landmines (see `docs/STATUS.md` §5 for full root causes)**
 

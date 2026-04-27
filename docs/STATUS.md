@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-> Snapshot: **2026-04-27** · Period 1 deployment is complete and live.
+> Snapshot: **2026-04-27** · Period 1 live. Period 1.5 (ML workbench) — backend landed, frontend pending.
 >
 > This document is optimised for two readers: (1) the operator (you, Sam),
 > and (2) the next assistant session that picks up where this one left off.
@@ -14,8 +14,12 @@
   daily fetcher scheduled, dashboard reachable on the public internet.
 - **Data path verified end-to-end.** yfinance → kbars_1m → 6 Continuous
   Aggregates → API → Next.js charts.
-- **No pending code work.** The remaining tasks are operational
-  (decommission the legacy Postgres plugin, watch tomorrow's auto-fetch).
+- **Period 1.5 — ML workbench backend is live.** `/api/v1/ml/train`
+  accepts a wizard config, fits an sklearn / xgboost / lightgbm model
+  with time-series safety rails, and persists each run to the new
+  `experiments` table. See `docs/ADR-002-ml-workbench.md`.
+- **Pending code work:** the workbench front-end (`/research` wizard,
+  result visualisations, experiments list).
 - **Hot warning — gotchas you must remember:** Railway CLI service-name
   trailing whitespace; root `.gitignore` `lib/` rule swallowing
   `frontend/lib/`; Railway PostgreSQL plugin lacks the `timescaledb`
@@ -205,7 +209,8 @@ set it, trigger a redeploy.
 
 | # | Item | When | How |
 |---|------|------|-----|
-| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After tomorrow's 00:00 UTC (Taiwan 08:00) fetch confirms the new pipeline is solid | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
+| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After the next 00:00 UTC (Taiwan 08:00) fetch confirms the pipeline is solid | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
+| **#48** | Build the workbench front-end (`/research` wizard, result charts, experiments list) — backend is live and ready to receive POSTs at `/api/v1/ml/train` | Next session | See ADR-002 and `app/ml/schemas.py` for the request shape |
 | 📋 | Re-watch the next scheduled fetch | After 00:00 UTC (Taiwan 08:00) weekday | `railway logs --service fetcher --since 1h`, then check `latest_ts` on dashboard |
 
 Everything else is in `# 7. Optimisation ideas` (not blocking).
