@@ -59,7 +59,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 |-------|--------|------|
 | Period 1 | ✅ Deployed | Data collection: TimescaleDB + daily auto-fetch |
 | Period 1.5 | 🚧 Backend live | No-code ML workbench (ADR-002); front-end pending |
-| Period 2 | 📋 Planned | Strategy research: signals + backtesting |
+| Period 2 | 🚧 In design | Strategy research: signals + backtesting — rule-based intraday engine kicked off, see `docs/ADR-003-backtest-engine.md` |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
 | Frontend | ✅ Deployed | Next.js 14 + lightweight-charts dashboard in `frontend/` |
 
@@ -83,6 +83,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 - ⏳ Watch the next 00:00 UTC (Taiwan 08:00) scheduled fetch
 - 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
 - 🛠 Build ML workbench front-end (`/research` wizard, result charts, experiments list) — backend `/api/v1/ml/train` already live; see `docs/ADR-002-ml-workbench.md` and `app/ml/schemas.py`
+- 🚧 **Period 2 backtest engine** (killzone OCO strategy, Monte Carlo, seasonality) — architecture in `docs/ADR-003-backtest-engine.md`; strategy-spec open questions in its §6 must be answered before B1 starts. FirstRate 18y CSV **not yet purchased** — long-horizon runs blocked on task B6
 
 **Known landmines (see `docs/STATUS.md` §5 for full root causes)**
 

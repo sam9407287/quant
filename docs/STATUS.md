@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-> Snapshot: **2026-04-27** · Period 1 live. Period 1.5 (ML workbench) — backend landed, frontend pending.
+> Snapshot: **2026-04-27** · Period 1 + Period 1.5 fully live. 9 instruments, ML workbench end-to-end, all four Railway services green.
 >
 > This document is optimised for two readers: (1) the operator (you, Sam),
 > and (2) the next assistant session that picks up where this one left off.
@@ -17,12 +17,12 @@
   truth in `app/core/instruments.py`.
 - **Data path verified end-to-end.** yfinance → kbars_1m → 6 Continuous
   Aggregates → API → Next.js charts.
-- **Period 1.5 — ML workbench backend is live.** `/api/v1/ml/train`
-  accepts a wizard config, fits an sklearn / xgboost / lightgbm model
-  with time-series safety rails, and persists each run to the new
-  `experiments` table. See `docs/ADR-002-ml-workbench.md`.
-- **Pending code work:** the workbench front-end (`/research` wizard,
-  result visualisations, experiments list).
+- **Period 1.5 — ML workbench fully live (backend + frontend).**
+  `/research` wizard runs sklearn / xgboost / lightgbm models with
+  time-series safety rails; experiments persist to the `experiments`
+  table; result page renders ECharts visualisations per task type. See
+  `docs/ADR-002-ml-workbench.md`.
+- **Pending code work:** none blocking. Optimisation backlog in §7.
 - **Hot warning — gotchas you must remember:** Railway CLI service-name
   trailing whitespace; root `.gitignore` `lib/` rule swallowing
   `frontend/lib/`; Railway PostgreSQL plugin lacks the `timescaledb`
@@ -58,6 +58,14 @@ Postgres    : 45aec38f-49bb-4796-a1bb-db2c19d88c82  (legacy)
 ## 3. Repo state (commits added this session)
 
 ```
+69c3fc9 feat(instruments): expand to 9 symbols across 3 asset classes
+0b22cb6 feat(frontend): ML workbench wizard, result viz, experiments list
+76a57b7 feat(ml): no-code ML workbench backend (ADR-002)
+7e8ef09 docs: ADR-002 — ML workbench architecture
+b9816da docs: reflect ML workbench backend landing in CLAUDE.md and STATUS.md
+b6afa6b chore: shift daily fetch to 00:00 UTC (Taiwan 08:00)
+48e393b docs: add Operating Mode (autonomy) section to CLAUDE.md
+9e4bd7f docs: add STATUS.md handoff doc, link from CLAUDE.md
 a621f36 fix(infra): track frontend/lib/ — was silently ignored by Python rule
 63717ae feat(infra): deploy frontend as a fourth Railway service
 f58e4ef feat(frontend): seed Next.js charting dashboard for ingested data
@@ -86,23 +94,77 @@ file or `CLAUDE.md` was just edited and not committed.
    - Per-view `try/except` so one misaligned view cannot halt the loop.
 3. **Scheduler decoupled** from `fetch_overlap_days` for CA refresh — uses
    the pipeline's safe default instead.
+4. **Daily fetch shifted to 00:00 UTC (Taiwan 08:00 weekdays)** so failures
+   surface during business hours rather than overnight.
 
-### Frontend
+### ML workbench (Period 1.5)
 
-4. **Next.js 14 dashboard** under `frontend/` with three pages:
-   - `/` — per-instrument cards with bar count + `latest_ts`
+5. **Backend** under `app/ml/` (ADR-002):
+   - `schemas.py` — typed Pydantic config + response models.
+   - `features.py` — feature engineers (lag returns, rolling stats, RSI,
+     EMA/SMA, volume ratio, HL spread) and target builders (log/simple
+     return, direction with deadband, realised vol). Targets are the
+     **only** place a forward shift is allowed.
+   - `models.py` — `MODEL_REGISTRY` of 21 sklearn / xgboost / lightgbm
+     models keyed by task. `build_model()` applies registry defaults
+     and silently drops unknown hyperparameters.
+   - `pipeline.py` — orchestrator: load bars → align target/features →
+     drop warm-up → chronological split → fit StandardScaler on train
+     only → fit model → metrics → response packaging. Hard caps at
+     100 k samples and 5 k response points.
+   - `repository.py` — JSONB-backed persistence; new `experiments` table
+     in `db/schema.sql`, gated by the `pgcrypto` extension.
+6. **Endpoints** under `/api/v1/ml/`:
+   - `POST /train` — runs end-to-end training, persists, returns metrics.
+   - `GET /experiments` and `GET /experiments/{id}`.
+   - 20 unit tests covering the load-bearing safety properties (no
+     leakage, fit-on-train-only, registry binding) — 109 total.
+7. **Frontend wizard at `/research`** (and `/research/experiments`):
+   - 4-section single-page wizard with task-aware defaults that prevent
+     impossible (task, target) combos from leaving the browser.
+   - Permanent "Time-series ML mode" banner spelling out the safety rails.
+   - Result panel renders ECharts visualisations per task: regression
+     gets predicted-vs-actual time series + scatter; classification gets
+     a sample-match table; clustering gets a 2D PCA scatter coloured by
+     cluster label. Feature importance bar appears whenever the model
+     exposes one.
+   - `/research/experiments` lists past runs with the most relevant
+     metric per task type.
+
+### Frontend (general)
+
+8. **Next.js 14 dashboard** under `frontend/` with five pages:
+   - `/` — instrument cards grouped by asset class (Indices / Metals /
+     Energy) with bar count + `latest_ts`
    - `/coverage` — full `(instrument × timeframe)` matrix
-   - `/chart` — interactive candlestick chart (lightweight-charts v4),
-     instrument & timeframe selectors, ratio adjustment server-side
-5. **Multi-stage Dockerfile** (`frontend/Dockerfile`) using
+   - `/chart` — interactive candlestick chart (lightweight-charts v4)
+     with grouped instrument selector
+   - `/research` — ML wizard (above)
+   - `/research/experiments` — experiments list (above)
+9. **Multi-stage Dockerfile** (`frontend/Dockerfile`) using
    `output: "standalone"` for a thin runtime image; non-root `nextjs` user.
-6. **Public deployment** with explicit CORS (no wildcard) — `quant`'s
-   `CORS_ORIGINS` is now `http://localhost:3000,https://frontend-production-d637.up.railway.app`.
+10. **Public deployment** with explicit CORS (no wildcard) — `quant`'s
+    `CORS_ORIGINS` is now `http://localhost:3000,https://frontend-production-d637.up.railway.app`.
+
+### Multi-instrument expansion
+
+11. **`app/core/instruments.py`** — single-source-of-truth registry
+    mapping internal `Symbol` to (display name, asset class, exchange,
+    yfinance ticker). `Instrument` Literal types in `app/api/kbars.py`
+    and `app/ml/schemas.py` re-export from this registry; mypy will
+    flag any place that still expects the old shorter set.
+12. **5 new instruments** seeded into `data_coverage` and `FETCH_INSTRUMENTS`
+    on Railway. First one-shot fetch landed 32 406 new 1m bars across
+    GC/SI/HG/CL/NG.
 
 ### Documentation
 
-7. ADR-001 rewritten for "self-hosted Railway" path (was "Timescale Cloud").
-8. README + CLAUDE.md updated for 4-service topology and frontend status.
+13. ADR-001 rewritten for "self-hosted Railway" path (was "Timescale Cloud").
+14. ADR-002 added — ML workbench architecture decisions.
+15. README + CLAUDE.md updated for 4-service topology, ML workbench, and
+    9-instrument universe.
+16. CLAUDE.md gained an **Operating Mode (autonomy)** section so the
+    assistant proceeds without round-tripping on routine work.
 
 ---
 
@@ -210,93 +272,172 @@ set it, trigger a redeploy.
 
 ## 6. Pending todos
 
+Nothing is blocking new feature work. Two operational items, then
+optimisation backlog.
+
 | # | Item | When | How |
 |---|------|------|-----|
-| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After the next 00:00 UTC (Taiwan 08:00) fetch confirms the pipeline is solid | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
-| **#48** | Build the workbench front-end (`/research` wizard, result charts, experiments list) — backend is live and ready to receive POSTs at `/api/v1/ml/train` | Next session | See ADR-002 and `app/ml/schemas.py` for the request shape |
-| 📋 | Re-watch the next scheduled fetch | After 00:00 UTC (Taiwan 08:00) weekday | `railway logs --service fetcher --since 1h`, then check `latest_ts` on dashboard |
+| **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After the next 00:00 UTC (Taiwan 08:00) fetch confirms the pipeline is still solid with all 9 instruments | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
+| 📋 | Watch the next scheduled fetch | 2026-04-28 (Tue) ≥ 00:30 UTC = Taiwan 08:30 | `railway logs --service fetcher --since 1h`. Confirm 9 instruments fetched and `data_coverage.latest_ts` advanced |
+| **#20** | Period 2 backtest engine (B1–B7) | Started 2026-07-19 | Architecture + task breakdown in `docs/ADR-003-backtest-engine.md`; answer its §6 open questions, then implement B1 → B4. FirstRate NQ purchase (B6) gates long-horizon/seasonality runs |
 
-Everything else is in `# 7. Optimisation ideas` (not blocking).
+Everything else is in §7 (optimisation) or §8 (Period 2 design direction).
 
 ---
 
-## 7. Optimisation ideas (Period 1.5)
+## 7. Optimisation backlog
 
-In rough priority order. Pick what ties in with portfolio narrative; don't
-do all of them.
+In rough priority order. Pick what ties into the portfolio narrative;
+don't do all of them.
+
+### High value (do first if time permits)
+
+- **CI build for the frontend.** `.github/workflows/ci.yml` does not
+  exercise `pnpm typecheck` or `pnpm build`. A frontend regression
+  could land on `main` and only fail on Railway. Adding the job is
+  ~15 minutes and prevents real outages.
+- **Backups for self-hosted timescaledb.** Currently zero. Cron a
+  `pg_dump` to object storage (or Railway's own backup service if it
+  ships for self-hosted DBs). Without this, ADR-001's "no managed
+  backups" trade-off is the highest production risk in the system.
+- **Health endpoint with real DB probe.** `/health` returns 200
+  unconditionally; richer `SELECT 1` + last-fetch-freshness check
+  becomes the load-bearing signal for "is the pipeline healthy" and
+  is interview-worthy on its own.
+- **Hook a real notifier endpoint.** `fetcher/notifier.py` posts to
+  `WEBHOOK_URL` when set; today nothing is configured. A free Discord
+  or Slack webhook would mean each fetch posts a summary, closing the
+  observability loop.
 
 ### Backend
 
-- **Health endpoint exposing real db connectivity.** `/health` currently
-  returns 200 unconditionally; richer probe (`SELECT 1` + last-fetch
-  freshness) would justify discussing observability in interviews.
 - **Structured JSON logs + request IDs.** Today logs are plain text
   per-line. Switching to `structlog` with correlation IDs makes the
   Railway log search useful and fits Stripe/Google review standards.
 - **`/api/v1/coverage/gaps` is O(N²).** Generates a per-minute series
-  for the whole window and left-joins. For long ranges it's slow;
-  switch to a CTE that walks `kbars_1m` ordered and detects deltas.
+  for the whole window and left-joins. Switch to a CTE that walks
+  `kbars_1m` ordered and detects deltas.
 - **API rate limiting.** `slowapi` middleware with a sensible per-IP
   cap; no auth model yet.
-- **Backups for self-hosted timescaledb.** Currently zero. Cron a
-  `pg_dump` to S3 (or Railway's own backup service if/when it lands
-  for self-hosted DBs). Without this, ADR-001's "no managed backups"
-  trade-off is real risk.
-- **Compression policy review.** Schema declares one but the data is
-  still small enough that nothing has compressed yet. Verify it
-  triggers as expected once volumes grow.
+- **Compression policy review.** Schema declares one but data is still
+  small enough that nothing has compressed yet. Verify it triggers as
+  expected once volumes grow.
 
 ### Fetcher
 
 - **Multi-source ingestion path.** Today only `YFinanceSource` exists.
-  Period 2 needs IBKR for live; abstracting now is cheap and shows
-  good design choices in code review.
+  Period 2 needs IBKR for live; abstracting now is cheap.
 - **Catch-up backfill on missed days.** If the scheduler misses a run
-  (Railway redeploy at the wrong moment), there's no retry-from-gap
-  logic. Add a one-shot script that detects and fills gaps.
+  (Railway redeploy at the wrong moment), no retry-from-gap logic
+  exists. Add a one-shot script that detects and fills gaps.
+- **Roll calendar for metals and energy.** Index futures roll quarterly
+  (H/M/U/Z); GC/SI/HG roll bimonthly; CL/NG roll monthly. The seed
+  table only has indices today. Adding the metal/energy schedules
+  unlocks `adjustment="ratio"` for those symbols (currently only
+  `raw` is meaningful for them).
 
 ### Frontend
 
-- **Time-range selector on `/chart`.** Today the lookback is hard-coded
-  per timeframe. A date-range picker would make the dashboard genuinely
-  useful for inspecting historical regimes.
-- **Volume-weighted average price overlay** (or any indicator). Cheap
-  to add and signals that this codebase is going somewhere.
-- **Loading skeletons + error boundaries.** Currently a 500 from the
-  API renders an ugly inline error message. Polish helps the portfolio
-  story.
-- **Coverage page filters.** Filter by instrument, sort columns. With
-  28 rows it's manageable; with more instruments it isn't.
+- **Time-range selector on `/chart`.** The lookback is hard-coded per
+  timeframe. A date picker would make historical regime inspection
+  meaningful.
+- **Indicator overlays** (SMA / EMA / VWAP / Bollinger). Cheap to add,
+  signals the codebase is going somewhere.
+- **Coverage page filters.** Filter by instrument, sort columns.
+  Manageable with 63 rows; not with the next expansion.
+- **Loading skeletons + error boundaries.** A 500 from the API renders
+  an ugly inline message today. Polish helps the portfolio story.
+- **Per-experiment detail page.** `/research/experiments/[id]` with
+  the full config, metrics, and "fork & rerun" affordance.
 - **Add the frontend URL to its own README.**
 
 ### Tooling
 
-- **CI build for the frontend.** `.github/workflows/ci.yml` doesn't
-  exercise the Next.js build today. Add a `frontend` job that runs
-  `pnpm typecheck` and `pnpm build` so renames don't break Railway
-  silently.
 - **mypy: clean up the 5 pre-existing `Missing type parameters`
-  warnings** in `fetcher/notifier.py` and `fetcher/scheduler.py` so
-  strict mode is actually green.
+  warnings** in `fetcher/notifier.py`, `fetcher/scheduler.py`,
+  `app/api/kbars.py`, `app/core/adjustment.py` so strict mode is
+  actually green end-to-end.
 - **`pnpm approve-builds`** for `unrs-resolver` to silence the install
   warning.
-
-### Observability
-
-- **Hook a real notifier endpoint.** `fetcher/notifier.py` posts to
-  `WEBHOOK_URL` if set; today nothing is configured. A free Discord/
-  Slack webhook means the daily run posts a summary.
-- **Per-deployment alerting.** Railway's built-in deploy notifications
-  are off — turn them on for `api` and `fetcher` failures.
+- **Pre-commit hooks** running ruff + mypy + pytest on changed files.
+  Faster local feedback than waiting for CI.
 
 ### Security / cleanup
 
-- **Rotate `API_SECRET_KEY`** away from `changeme` (visible in
-  Suggested Variables earlier). It's not used anywhere yet but it
-  exists.
-- **Tighten CORS to https only** if a localhost variant is no longer
-  needed for active dev.
-- **Decommission the old `Postgres` plugin** (Task #19, see above).
+- **Rotate `API_SECRET_KEY`** away from `changeme`. Not used anywhere
+  yet but the plaintext default is a footgun.
+- **Tighten CORS to HTTPS only** once localhost dev tapers off.
+- **Decommission the old `Postgres` plugin** (Task #19).
+
+---
+
+## 8. Period 2 design direction (signal research & backtesting)
+
+> **Update 2026-07-19:** Period 2 now has a second track — a rule-based
+> intraday backtest engine (killzone OCO / Judas-swing strategy, Monte
+> Carlo, seasonality analysis), architecture in
+> `docs/ADR-003-backtest-engine.md`. The ML-signal track sketched below
+> stays valid; the two share the analysis layer and persistence pattern.
+
+Period 1 + 1.5 supply the data and the model fitter. Period 2 turns
+trained models into testable signals, then evaluates them properly.
+
+### What "Period 2 done" looks like
+
+1. **Signal definition surface.** A signal is a deterministic function
+   from a model's prediction series + a threshold/parameter set →
+   `{−1, 0, +1}` position vector. Signals live as DB rows so they're
+   diffable and reproducible, exactly like experiments are now.
+2. **Backtest engine.** Vectorised P&L over the position vector
+   against the kbars: returns, Sharpe, Sortino, max drawdown, hit
+   rate, average win/loss, transaction-cost model, slippage.
+3. **Walk-forward evaluation.** Train on `[t-N, t]`, signal on
+   `[t, t+M]`, slide the window. The single-fold metrics in the
+   workbench today are diagnostic, not decision-grade.
+4. **Comparison page on the frontend.** `/research/signals` lists
+   signals (not raw experiments), with metric columns and a "compare
+   two" affordance.
+
+### Architecture sketch
+
+- **New table `signals`** alongside `experiments`. Each row references
+  one or more `experiment_id`s and stores the signal's parameter dict.
+- **New module `app/backtest/`** — pure NumPy, single pass over the
+  joined `(positions, returns)` arrays. No external libraries:
+  vectorbt is great but heavy and rebuilds half of what we need
+  anyway.
+- **Endpoint `/api/v1/backtest`** taking `(signal_id, start, end,
+  cost_bps)` and returning the full equity curve plus the metric
+  table. Same sync vs async stance as `/ml/train` until proven slow.
+- **Frontend `/research/signals`** — defines and persists signals;
+  `/research/backtest/[id]` — renders the equity curve, drawdown,
+  rolling Sharpe, trade table.
+
+### Sequencing recommendation
+
+1. **(small)** Land the per-experiment detail page (§7 frontend
+   bullet) first — it makes the workbench self-sufficient as a
+   research tool before signals exist.
+2. **(medium)** Walk-forward CV inside the existing `/ml/train`
+   endpoint. The schema already has `walk_forward_folds` — wire it
+   up. Output: per-fold metrics distribution. This is high-leverage:
+   one feature dramatically improves the rigour of every model run.
+3. **(medium)** Roll calendar for metals/energy. Without this, the
+   ML workbench is technically running on partially adjusted prices
+   for those symbols (no rolls applied, but their data does have
+   real roll discontinuities yfinance hasn't smoothed). Add the
+   schedules before doing comparative cross-asset research.
+4. **(large)** Backtest engine + signals + UI. This is Period 2
+   proper.
+
+### Things explicitly **not** doing yet
+
+- **GPU / deep learning.** Confirmed out of scope per ADR-002 §D2.
+  Linear/tree baselines first; revisit only if those plateau.
+- **Live trading / IBKR integration.** Period 3 territory. Keep all
+  Period 2 work paper-trading-only.
+- **Multi-user auth.** This stays a single-operator tool through
+  Period 2.
 
 ---
 
