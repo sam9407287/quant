@@ -114,8 +114,21 @@ def run_session(
         )
 
     sign = 1.0 if direction == "long" else -1.0
-    entry_price = entry_level + sign * slip  # slippage is always adverse
     entry_bar = monitor[entry_idx]
+    # Gap-through fill, breakout mode only: breakout entries are STOP
+    # orders, and when the triggering bar already OPENS beyond the level
+    # (typical for evening ranges monitored from the next morning) a stop
+    # fills near that open, not back at the level — book the worse of
+    # (level, open). Fade entries are LIMIT orders: a gapped limit fills
+    # at the same-or-better price, so booking the level is conservative.
+    raw_fill = entry_level
+    if params.direction_mode == "breakout":
+        raw_fill = (
+            max(entry_level, entry_bar.open)
+            if sign > 0
+            else min(entry_level, entry_bar.open)
+        )
+    entry_price = raw_fill + sign * slip  # slippage is always adverse
 
     sl_points = _offset_points(params.sl_mode, params.sl_value, entry_price, atr)
     tp_pts = params.tp_points if params.tp_points is not None else sl_points * (params.rrr or 0.0)
@@ -129,14 +142,20 @@ def run_session(
     exit_ts = None
     # Entry bar included: its full range already happened around the
     # fill, and excluding it would optimistically skip same-bar stops.
-    for b in monitor[entry_idx:]:
+    for offset_idx, b in enumerate(monitor[entry_idx:]):
         mae = max(mae, sign * (entry_price - (b.low if sign > 0 else b.high)))
         mfe = max(mfe, sign * ((b.high if sign > 0 else b.low) - entry_price))
         stop_hit = b.low <= sl_level if sign > 0 else b.high >= sl_level
         target_hit = b.high >= tp_level if sign > 0 else b.low <= tp_level
         if stop_hit:  # checked first: both-in-one-bar books as SL
             exit_reason = "sl"
-            exit_price = sl_level - sign * slip
+            # A later bar that OPENS beyond the stop gaps through it —
+            # the stop order fills near that open, not at the level.
+            # (Not on the entry bar itself: entry happened mid-bar.)
+            raw_stop = sl_level
+            if offset_idx > 0:
+                raw_stop = min(sl_level, b.open) if sign > 0 else max(sl_level, b.open)
+            exit_price = raw_stop - sign * slip
             exit_ts = b.ts
             break
         if target_hit:

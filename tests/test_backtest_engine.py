@@ -247,3 +247,49 @@ class TestEngineAndParams:
         assert _in_window(dtime(1, 59), start, end)
         assert not _in_window(dtime(2, 0), start, end)
         assert not _in_window(dtime(12, 0), start, end)
+
+
+class TestGapThroughFills:
+    def test_breakout_entry_gapping_open_fills_at_open(self) -> None:
+        # Evening range high 100; the 09:30 bar OPENS at 104 — far beyond
+        # the level. A buy stop fills near the open, not back at 100.
+        bars = RANGE_BARS + [
+            bar("09:30", 104, 105, 103, 104.5),
+            bar("09:31", 104.5, 114.5, 104, 114),
+        ]
+        result = run_session(DAY, bars, make_params(direction_mode="breakout"))
+        assert result.direction == "long"
+        assert result.entry_price == pytest.approx(104.0)
+
+    def test_fade_entry_gapping_open_stays_at_level(self) -> None:
+        # Same gap, fade mode: the sell LIMIT at 100 would actually fill
+        # at the better open price; booking the level is the conservative
+        # side, so entry stays 100.
+        bars = RANGE_BARS + [
+            bar("09:30", 104, 105, 103, 104.5),
+            bar("09:31", 104, 104, 89.5, 91),
+        ]
+        result = run_session(DAY, bars, make_params())
+        assert result.direction == "short"
+        assert result.entry_price == pytest.approx(100.0)
+
+    def test_stop_loss_gap_through_fills_at_open(self) -> None:
+        bars = RANGE_BARS + [
+            bar("09:30", 98, 100, 97, 99),        # short @100, sl level 105
+            bar("09:31", 99, 100, 98, 99.5),      # quiet bar
+            bar("09:32", 108, 109, 107, 108.5),   # gaps OPEN above 105 → fill at 108
+        ]
+        result = run_session(DAY, bars, make_params())
+        assert result.exit_reason == "sl"
+        assert result.exit_price == pytest.approx(108.0)
+        assert result.pnl_points == pytest.approx(-8.0)
+
+    def test_same_bar_stop_still_fills_at_level(self) -> None:
+        # On the ENTRY bar the position opened mid-bar; a stop touch on
+        # that same bar is not a gap — fills at the stop level.
+        bars = RANGE_BARS + [
+            bar("09:30", 98, 105.5, 97, 105),     # short @100, bar runs to SL 105
+        ]
+        result = run_session(DAY, bars, make_params())
+        assert result.exit_reason == "sl"
+        assert result.exit_price == pytest.approx(105.0)
