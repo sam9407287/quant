@@ -2,6 +2,7 @@
   "name": "quant-futures-frontend",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.24.0",
   "description": "Charting dashboard for the Quant Futures CME index futures analytics API",
   "scripts": {
     "dev": "next dev",

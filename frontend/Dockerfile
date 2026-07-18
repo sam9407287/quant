@@ -8,7 +8,11 @@
 # repo root as context for every service in railway.toml), so all COPY
 # paths are prefixed with `frontend/`.
 
-FROM node:20-alpine AS base
+# Node 22 LTS: Node 20 went EOL 2026-04, and current pnpm releases
+# require >= 22.13 at runtime. The pnpm version itself is pinned by the
+# `packageManager` field in package.json (corepack reads it), so builds
+# no longer float to whatever pnpm shipped last night.
+FROM node:22-alpine AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
 
