@@ -159,15 +159,15 @@ months of data).
 
 ## 5. Task breakdown
 
-| # | Task | Size | Depends on |
+| # | Task | Size | Status |
 |---|---|---|---|
-| B1 | `params.py` + `engine.py` + `killzone_oco.py` + unit tests (synthetic bar fixtures pin OCO, tie-rule, EOD, no-fill) | M | — |
-| B2 | `loader.py` (kbars_1m → NY sessions) + `backtest_runs`/`backtest_trades` tables + migration | M | B1 |
-| B3 | `analysis.py` (equity, seasonality, Monte Carlo) + tests | M | B1 |
-| B4 | API endpoints + OpenAPI docs | S | B2 |
-| B5 | Frontend params form + result charts | M | B4 |
-| B6 | FirstRate NQ purchase + `bootstrap_csv.py` load + coverage verify | S (external $) | — |
-| B7 | Node-canvas UI (QuantFlow concept) compiling to `BacktestParams` | L | B5 |
+| B1 | `params.py` + `engine.py` + `killzone_oco.py` + unit tests (synthetic bar fixtures pin OCO, tie-rule, EOD, no-fill) | M | ✅ 2026-07-19 |
+| B2 | `loader.py` (kbars_1m → sessions + ATR) + `backtest_runs`/`backtest_trades` tables | M | ✅ 2026-07-19 |
+| B3 | `analysis.py` (equity, seasonality, Monte Carlo) + tests | M | ✅ 2026-07-19 |
+| B4 | `/api/v1/backtest` endpoints + integration tests | S | ✅ 2026-07-19 |
+| B5 | Frontend `/research/backtest` params form + result charts | M | ✅ 2026-07-19 |
+| B6 | FirstRate NQ purchase + `bootstrap_csv.py` load + coverage verify | S (external $) | ⏳ blocked on purchase decision |
+| B7 | Node-canvas UI `/research/backtest/canvas` compiling to `BacktestParams` | L | ✅ 2026-07-19 (MVP) |
 
 ## 6. Strategy-spec decisions (answered by Sam, 2026-07-19)
 
