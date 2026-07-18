@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.2",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "lightweight-charts": "^4.2.3",
