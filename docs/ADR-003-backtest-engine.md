@@ -1,6 +1,6 @@
 # ADR-003: Rule-Based Intraday Backtest Engine (Period 2 Kickoff)
 
-- **Status:** Proposed — architecture settled, strategy-spec open questions pending (§6)
+- **Status:** Accepted — architecture and strategy spec settled 2026-07-19 (§6); B1 in progress
 - **Date:** 2026-07-19
 - **Deciders:** Sam
 - **Supersedes / relates:** Extends the Period 2 sketch in `STATUS.md` §8; does not replace the ML-signal vectorised backtest planned there.
@@ -78,13 +78,15 @@ Engine rules:
 
 | Group | Fields |
 |---|---|
-| Universe | `instrument` (NQ…), `contract_spec` (point value, e.g. MNQ $2/pt), `start`, `end` |
-| Range window | `range_window` (session preset or explicit NY-time window) — the period whose high/low seeds the orders |
-| Killzone | `killzone` (NY-time window in which entries may trigger), `eod_flat` (NY time) |
-| Entry | `entry_offset_mode` = `pct` \| `points` \| `atr`, `entry_offset_value`, `direction_mode` = `fade` \| `breakout` |
-| Exit | `sl_mode` = `points` \| `pct` \| `atr`, `sl_value`, `rrr` (TP = SL × rrr) **or** explicit `tp_value` |
-| ATR | `atr_period`, `atr_timeframe` (for `atr`-mode offsets/stops) |
-| Costs | `slippage_points_per_side`, `commission_usd_per_rt` |
+| Universe | `instrument` (NQ…), `point_value_usd` (default MNQ $2/pt) + `contracts` — both adjustable by design, `start`, `end` |
+| Session clock | `clock.tz` (user-selectable timezone), `clock.range_start`/`range_end` (window whose high/low seeds the orders), `clock.orders_place` (when the OCO brackets go live), `clock.eod_flat` (force-flat + cancel unfilled) — **all four wall-clock knobs user-configurable** |
+| Entry | `entry_offset_mode` = `pct` \| `points` \| `atr`, `entry_offset_value` (signed; positive = beyond the range), `direction_mode` = `fade` (default) \| `breakout` |
+| Exit | `sl_mode` = `points` \| `pct` \| `atr`, `sl_value`, `rrr` (TP = SL × rrr) **or** explicit `tp_points` override |
+| ATR | `atr_period` (`atr`-mode offsets/stops; loader supplies the per-session value) |
+| Costs | `slippage_points_per_side`, `commission_usd_per_rt` — **default 0, not modeled for now** per 2026-07-19 decision; fields exist so enabling them later is a params change, not a code change |
+
+One entry per session, hard rule: the first fill cancels the opposite
+bracket, and there is no re-entry after the position exits.
 
 Parameter sweeps = cartesian product over a params grid; each combo is one
 run row (§2.3), so sweeps are reproducible and diffable.
@@ -167,20 +169,28 @@ months of data).
 | B6 | FirstRate NQ purchase + `bootstrap_csv.py` load + coverage verify | S (external $) | — |
 | B7 | Node-canvas UI (QuantFlow concept) compiling to `BacktestParams` | L | B5 |
 
-## 6. Open questions (need Sam before B1 freezes the strategy spec)
+## 6. Strategy-spec decisions (answered by Sam, 2026-07-19)
 
-1. **Range window** — which period's high/low seeds the orders? Asia
-   session, London session, NY pre-market (e.g. 00:00–09:30 NY), or a
-   fixed lookback window?
-2. **Killzone window** — exact NY-time entry window (e.g. 09:30–11:00)?
-   And the EOD flat time (e.g. 15:55 NY)?
-3. **Direction semantics** — "fade" = sell stop-limit at range high, buy
-   at range low (mean reversion)? Or stop orders in the breakout
-   direction? (The Judas-swing narrative implies fade — confirm.)
-4. **Both-sides-filled day** — after one side fills and later exits, may
-   the *other* side still trigger the same day, or is it one trade per
-   day max?
-5. **Contract math** — backtest on NQ price data but book P&L at MNQ
-   $2/point, 1 contract, correct?
-6. **Cost defaults** — proposed: slippage 1 pt/side on stop entries and
-   stops, 0 on limits; commission $1.24/rt (MNQ retail typical). OK?
+1. **Range window** — not a fixed preset: the high/low window is
+   **user-configurable** (start time, end time, *and* timezone) in the
+   params. Same for the order-placement time and the forced-flat time.
+2. **Killzone semantics** — at `orders_place` the OCO brackets go live,
+   computed from the configured range window's high/low; entries may
+   trigger any time until `eod_flat`, when open positions are closed and
+   unfilled orders cancelled.
+3. **Direction** — fade (sell the high level, buy the low level) is the
+   default and matches the Judas-swing narrative; **breakout mode is a
+   supported toggle** on the same levels.
+4. **One trade per session, hard.** First fill cancels the opposite
+   bracket; no re-entry after exit.
+5. **Contract math** — NQ price history, P&L at MNQ $2/point × 1
+   contract by default; `point_value_usd` and `contracts` stay
+   parameters for future sizing flexibility.
+6. **Costs** — commission and slippage **not modeled for now**; params
+   exist with 0 defaults so they can be switched on later without code
+   changes.
+
+Strategy catalog lives in `docs/STRATEGIES.md` (first entry: *ICT —
+Judas Swing*). The QuantFlow-concept node canvas (B7) is **confirmed**
+as the long-term UI direction; the `BacktestParams` JSON contract in
+§2.2 is what that canvas will compile to.
