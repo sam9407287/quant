@@ -6,6 +6,7 @@ const links = [
   { href: "/chart", label: "Chart" },
   { href: "/research", label: "Research" },
   { href: "/research/experiments", label: "Experiments" },
+  { href: "/research/backtest", label: "Backtest" },
 ];
 
 export function Nav() {
