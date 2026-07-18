@@ -256,3 +256,46 @@ CREATE TABLE IF NOT EXISTS experiments (
 
 CREATE INDEX IF NOT EXISTS experiments_created_at_idx
     ON experiments (created_at DESC);
+
+-- =============================================================
+-- Backtest runs & trades (ADR-003)
+-- =============================================================
+-- One backtest_runs row per engine invocation on /api/v1/backtest.
+-- The full BacktestParams JSON and the summary metrics live as JSONB
+-- (same reasoning as experiments); per-session outcomes are relational
+-- rows in backtest_trades because the analysis endpoints re-read them
+-- as a series (Monte Carlo, seasonality). Plain tables, not
+-- hypertables — access is "by run id", never time-bucketed.
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    instrument  TEXT        NOT NULL,
+    params      JSONB       NOT NULL,
+    metrics     JSONB       NOT NULL,
+    runtime_ms  INT         NOT NULL,
+    notes       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS backtest_runs_created_at_idx
+    ON backtest_runs (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id       UUID NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
+    session_date DATE NOT NULL,
+    exit_reason  TEXT NOT NULL,
+    direction    TEXT,
+    entry_ts     TIMESTAMPTZ,
+    entry_price  DOUBLE PRECISION,
+    exit_ts      TIMESTAMPTZ,
+    exit_price   DOUBLE PRECISION,
+    pnl_points   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pnl_usd      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mae_points   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mfe_points   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    range_high   DOUBLE PRECISION,
+    range_low    DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS backtest_trades_run_idx
+    ON backtest_trades (run_id, session_date);

@@ -114,6 +114,9 @@ async def _truncate_test_state(engine) -> None:
             text("UPDATE data_coverage SET earliest_ts=NULL, latest_ts=NULL, "
                  "bar_count=0, last_fetch_ts=NULL")
         )
+        # backtest_trades cascades from backtest_runs.
+        with contextlib.suppress(Exception):
+            await conn.execute(text("TRUNCATE backtest_runs CASCADE"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -308,3 +311,145 @@ class TestKbarsAPI:
         body = resp.json()
         assert body["count"] == 5
         assert body["instrument"] == "NQ"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backtest API integration tests (ADR-003 B2/B4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _backtest_session_bars() -> pd.DataFrame:
+    """One hand-crafted NY session (2024-01-02, EST = UTC-5).
+
+    Range window 09:00–09:30 NY → high 18100 / low 18000. The 09:30 bar
+    touches the high (fade short entry @18100); the 09:31 bar trades down
+    through the 18000 take-profit (sl 50 pts × rrr 2 = 100 pts).
+    """
+    rows = [
+        # 09:00 NY = 14:00 UTC — the range bar
+        ("2024-01-02T14:00:00Z", 18050.0, 18100.0, 18000.0, 18050.0),
+        # 09:30 NY — killzone opens, touches range high → short entry
+        ("2024-01-02T14:30:00Z", 18080.0, 18100.0, 18070.0, 18090.0),
+        # 09:31 NY — drops through TP at 18000
+        ("2024-01-02T14:31:00Z", 18090.0, 18095.0, 17995.0, 18010.0),
+    ]
+    return pd.DataFrame(
+        {
+            "ts": pd.to_datetime([r[0] for r in rows], utc=True),
+            "open": [r[1] for r in rows],
+            "high": [r[2] for r in rows],
+            "low": [r[3] for r in rows],
+            "close": [r[4] for r in rows],
+            "volume": [1000] * len(rows),
+        }
+    )
+
+
+_BACKTEST_PARAMS = {
+    "instrument": "NQ",
+    "start": "2024-01-02",
+    "end": "2024-01-02",
+    "clock": {
+        "tz": "America/New_York",
+        "range_start": "09:00",
+        "range_end": "09:30",
+        "orders_place": "09:30",
+        "eod_flat": "16:00",
+    },
+    "direction_mode": "fade",
+    "sl_mode": "points",
+    "sl_value": 50.0,
+    "rrr": 2.0,
+}
+
+
+class TestBacktestAPI:
+    @pytest.mark.asyncio
+    async def test_run_persist_and_read_back(self, session: AsyncSession) -> None:
+        from app.db.session import get_db
+        from app.main import app
+
+        df = validate(_backtest_session_bars())
+        await upsert_bars(session, df, "NQ", "test")
+
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/v1/backtest/runs",
+                    json={"params": _BACKTEST_PARAMS, "notes": "integration"},
+                )
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                run_id = body["run_id"]
+                # Short @18100, TP 100 pts below → +100 pts × $2 MNQ = $200.
+                assert body["metrics"]["trade_count"] == 1
+                assert body["metrics"]["total_pnl_usd"] == pytest.approx(200.0)
+                assert body["trades"][0]["exit_reason"] == "tp"
+                assert body["trades"][0]["direction"] == "short"
+                assert body["equity_curve"] == [
+                    {"date": "2024-01-02", "equity_usd": 200.0}
+                ]
+
+                listed = await client.get("/api/v1/backtest/runs")
+                assert run_id in [r["id"] for r in listed.json()]
+
+                detail = await client.get(f"/api/v1/backtest/runs/{run_id}")
+                assert detail.status_code == 200
+                dbody = detail.json()
+                assert dbody["params"]["sl_value"] == 50.0
+                assert dbody["trades"][0]["pnl_usd"] == pytest.approx(200.0)
+                assert dbody["metrics"]["total_pnl_usd"] == pytest.approx(200.0)
+
+                season = await client.get(
+                    f"/api/v1/backtest/runs/{run_id}/seasonality",
+                    params={"bucket": "month"},
+                )
+                assert season.status_code == 200
+                buckets = season.json()["buckets"]
+                assert buckets == [
+                    {
+                        "bucket": 1,
+                        "trade_count": 1,
+                        "total_pnl_usd": 200.0,
+                        "mean_pnl_usd": 200.0,
+                        "win_rate": 1.0,
+                    }
+                ]
+
+                mc = await client.get(
+                    f"/api/v1/backtest/runs/{run_id}/montecarlo",
+                    params={"n_sims": 200},
+                )
+                assert mc.status_code == 200
+                mcb = mc.json()
+                # A single +$200 day: every bootstrap path ends at +200.
+                assert mcb["terminal_pnl_percentiles"]["50"] == pytest.approx(200.0)
+                assert mcb["prob_terminal_loss"] == 0.0
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_run_with_no_data_is_400(self, session: AsyncSession) -> None:
+        from app.db.session import get_db
+        from app.main import app
+
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                params = dict(_BACKTEST_PARAMS, start="2030-01-06", end="2030-01-07")
+                resp = await client.post(
+                    "/api/v1/backtest/runs", json={"params": params}
+                )
+                assert resp.status_code == 400
+                assert "no 1m bars" in resp.json()["detail"]
+
+                missing = await client.get(
+                    "/api/v1/backtest/runs/00000000-0000-0000-0000-000000000000"
+                )
+                assert missing.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
