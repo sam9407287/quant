@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.core.config import Settings
+from app.core.instruments import ALL_SYMBOLS
 
 
 class TestSettings:
-    def test_default_instruments(self) -> None:
-        s = Settings()
-        assert s.fetch_instruments == ["NQ", "ES", "YM", "RTY"]
+    def test_default_instruments(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Pinned to the registry, not a hand-written list, so adding an
+        # instrument (one registry entry + one Settings default entry)
+        # cannot silently leave this test stale again. Isolated from the
+        # ambient environment: a developer's .env / FETCH_INSTRUMENTS
+        # override must not change what "default" means.
+        monkeypatch.delenv("FETCH_INSTRUMENTS", raising=False)
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.fetch_instruments == list(ALL_SYMBOLS)
 
     def test_instruments_from_comma_string(self) -> None:
         s = Settings(fetch_instruments="NQ,ES")  # type: ignore[arg-type]
