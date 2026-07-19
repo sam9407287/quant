@@ -84,6 +84,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 - 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
 - 🛠 Build ML workbench front-end (`/research` wizard, result charts, experiments list) — backend `/api/v1/ml/train` already live; see `docs/ADR-002-ml-workbench.md` and `app/ml/schemas.py`
 - ✅ **Period 2 backtest engine shipped** (2026-07-19): engine + analysis + `/api/v1/backtest` + `/research/backtest` form + `/research/backtest/canvas` node UI. Remaining: **B6 — FirstRate 18y CSV not yet purchased**; until it lands, only ~3 months of yfinance data back the runs, so seasonality/Monte Carlo conclusions are not yet meaningful
+- 🚧 **Multi-user auth shipped, awaiting activation** (2026-07-20, ADR-005): Google Sign-In + per-user ownership (strategies/backtest_runs) + admin allowlist. Code deployed; **needs Sam to create the GCP OAuth Client ID and set 3 Railway env vars** — runbook in ADR-005 §5. Until then protected endpoints answer 503
 - ✅ **Strategy builder + chart trade overlay shipped** (2026-07-20, ADR-004): `strategies` JSONB table, rule DSL (indicator conditions + optional SL/TP), `/api/v1/strategies` CRUD+evaluate, `/research/strategies` form builder, `/chart` overlay (entry/exit markers + green/red position boxes via custom lightweight-charts primitive)
 
 **Known landmines (see `docs/STATUS.md` §5 for full root causes)**
