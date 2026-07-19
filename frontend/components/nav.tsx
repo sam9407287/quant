@@ -7,6 +7,7 @@ const links = [
   { href: "/research", label: "Research" },
   { href: "/research/experiments", label: "Experiments" },
   { href: "/research/backtest", label: "Backtest" },
+  { href: "/research/strategies", label: "Strategies" },
 ];
 
 export function Nav() {

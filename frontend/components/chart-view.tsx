@@ -6,11 +6,16 @@ import {
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
   createChart,
 } from "lightweight-charts";
 
+import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
 import { fetchKBars } from "@/lib/api";
+import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
+import { evaluateStrategy, listStrategies } from "@/lib/strategies";
 import type { Instrument, KBar, Timeframe } from "@/lib/types";
 import {
   ASSET_CLASS_LABEL,
@@ -47,10 +52,17 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
+  const [strategies, setStrategies] = useState<StrategyRecord[]>([]);
+  const [strategyId, setStrategyId] = useState<string>("");
+  const [evalResult, setEvalResult] = useState<EvaluateResponse | null>(null);
+  const [evalError, setEvalError] = useState<string | null>(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const boxesRef = useRef<TradeBoxesPrimitive | null>(null);
 
   const range = useMemo(() => {
     const end = new Date();
@@ -93,15 +105,26 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     volumes.priceScale().applyOptions({
       scaleMargins: { top: 0.85, bottom: 0 },
     });
+    const boxes = new TradeBoxesPrimitive(chart, candles);
+    candles.attachPrimitive(boxes);
     chartRef.current = chart;
     candleRef.current = candles;
     volumeRef.current = volumes;
+    boxesRef.current = boxes;
     return () => {
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
       volumeRef.current = null;
+      boxesRef.current = null;
     };
+  }, []);
+
+  // Saved strategies for the overlay picker.
+  useEffect(() => {
+    listStrategies()
+      .then(setStrategies)
+      .catch(() => setStrategies([]));
   }, []);
 
   const load = useCallback(async () => {
@@ -129,6 +152,57 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     void load();
   }, [load]);
 
+  // Evaluate the selected strategy over the same instrument/range the
+  // chart is showing. Selecting a strategy forces the chart onto the
+  // strategy's timeframe, so bar times and trade times line up exactly.
+  useEffect(() => {
+    if (!strategyId) {
+      setEvalResult(null);
+      setEvalError(null);
+      return;
+    }
+    let cancelled = false;
+    setEvalLoading(true);
+    setEvalError(null);
+    evaluateStrategy(strategyId, {
+      instrument,
+      start: range.start.toISOString(),
+      end: range.end.toISOString(),
+      adjustment: "ratio",
+    })
+      .then((res) => {
+        if (!cancelled) setEvalResult(res);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setEvalResult(null);
+          setEvalError(e instanceof Error ? e.message : String(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEvalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [strategyId, instrument, range]);
+
+  function selectStrategy(id: string) {
+    setStrategyId(id);
+    if (id) {
+      const s = strategies.find((x) => x.id === id);
+      if (s) setTimeframe(s.definition.timeframe);
+    }
+  }
+
+  function selectTimeframe(t: Timeframe) {
+    setTimeframe(t);
+    // A strategy is pinned to its own timeframe — switching away
+    // removes the overlay rather than showing misaligned trades.
+    const s = strategies.find((x) => x.id === strategyId);
+    if (s && s.definition.timeframe !== t) setStrategyId("");
+  }
+
   // Re-render the chart series whenever a new bar set lands. Going through
   // setData rather than incremental updates keeps the chart deterministic
   // when the user toggles between instruments.
@@ -154,6 +228,63 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     );
     chartRef.current.timeScale().fitContent();
   }, [bars]);
+
+  // Trade overlay: entry/exit markers + SL/TP position boxes.
+  useEffect(() => {
+    if (!candleRef.current || !boxesRef.current) return;
+    if (!evalResult) {
+      candleRef.current.setMarkers([]);
+      boxesRef.current.setBoxes([]);
+      return;
+    }
+    const markers: SeriesMarker<Time>[] = [];
+    const boxes: TradeBox[] = [];
+    const exitText: Record<string, string> = {
+      sl: "SL",
+      tp: "TP",
+      signal: "EXIT",
+      end: "END",
+    };
+    for (const t of evalResult.trades) {
+      const entryTime = toUtcSeconds(t.entry_ts);
+      const exitTime = toUtcSeconds(t.exit_ts);
+      markers.push({
+        time: entryTime,
+        position: t.direction === "long" ? "belowBar" : "aboveBar",
+        color: t.direction === "long" ? "#26a69a" : "#ef5350",
+        shape: t.direction === "long" ? "arrowUp" : "arrowDown",
+        text: t.direction.toUpperCase(),
+      });
+      markers.push({
+        time: exitTime,
+        position: t.direction === "long" ? "aboveBar" : "belowBar",
+        color: t.exit_reason === "sl" ? "#ef5350" : t.exit_reason === "tp" ? "#26a69a" : "#a1a7b3",
+        shape: t.exit_reason === "sl" ? "square" : "circle",
+        text: exitText[t.exit_reason],
+      });
+      if (t.tp_level !== null) {
+        boxes.push({
+          from: entryTime,
+          to: exitTime,
+          priceA: t.entry_price,
+          priceB: t.tp_level,
+          kind: "profit",
+        });
+      }
+      if (t.sl_level !== null) {
+        boxes.push({
+          from: entryTime,
+          to: exitTime,
+          priceA: t.entry_price,
+          priceB: t.sl_level,
+          kind: "risk",
+        });
+      }
+    }
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    candleRef.current.setMarkers(markers);
+    boxesRef.current.setBoxes(boxes);
+  }, [evalResult, bars]);
 
   return (
     <div className="space-y-4">
@@ -185,7 +316,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             <button
               key={t}
               type="button"
-              onClick={() => setTimeframe(t)}
+              onClick={() => selectTimeframe(t)}
               className={`rounded-md px-2.5 py-1.5 font-mono text-xs transition ${
                 timeframe === t
                   ? "bg-accent-blue text-white"
@@ -196,10 +327,74 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             </button>
           ))}
         </div>
+        <div className="h-5 w-px bg-border" />
+        <select
+          value={strategyId}
+          onChange={(e) => selectStrategy(e.target.value)}
+          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none"
+          title="Overlay a saved strategy"
+        >
+          <option value="">No strategy</option>
+          {strategies.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.definition.timeframe})
+            </option>
+          ))}
+        </select>
         <div className="ml-auto text-xs text-zinc-500">
-          {loading ? "Loading…" : bars ? `${bars.length} bars` : ""}
+          {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
         </div>
       </div>
+
+      {evalError && (
+        <div className="rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-sm text-accent-red">
+          <span className="font-mono">{evalError}</span>
+        </div>
+      )}
+
+      {evalResult && (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border border-border bg-bg-panel px-4 py-2 font-mono text-xs text-zinc-400">
+          <span>
+            trades <span className="text-zinc-100">{evalResult.metrics.trade_count}</span>
+          </span>
+          <span>
+            win rate{" "}
+            <span className="text-zinc-100">
+              {(evalResult.metrics.win_rate * 100).toFixed(1)}%
+            </span>
+          </span>
+          <span>
+            PF{" "}
+            <span className="text-zinc-100">
+              {evalResult.metrics.profit_factor?.toFixed(2) ?? "—"}
+            </span>
+          </span>
+          <span>
+            total{" "}
+            <span
+              className={
+                evalResult.metrics.total_pnl_points >= 0
+                  ? "text-accent-green"
+                  : "text-accent-red"
+              }
+            >
+              {evalResult.metrics.total_pnl_points.toFixed(1)} pts
+            </span>
+          </span>
+          <span>
+            maxDD{" "}
+            <span className="text-accent-red">
+              {evalResult.metrics.max_drawdown_points.toFixed(1)} pts
+            </span>
+          </span>
+          <span>
+            expectancy{" "}
+            <span className="text-zinc-100">
+              {evalResult.metrics.expectancy_points.toFixed(2)} pts
+            </span>
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-sm text-accent-red">

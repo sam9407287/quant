@@ -279,6 +279,7 @@ optimisation backlog.
 |---|------|------|-----|
 | **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After the next 00:00 UTC (Taiwan 08:00) fetch confirms the pipeline is still solid with all 9 instruments | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
 | 📋 | Watch the next scheduled fetch | 2026-04-28 (Tue) ≥ 00:30 UTC = Taiwan 08:30 | `railway logs --service fetcher --since 1h`. Confirm 9 instruments fetched and `data_coverage.latest_ts` advanced |
+| **#21** | Strategy builder + chart overlay (ADR-004) | ✅ Shipped 2026-07-20 | strategies table + rule engine + /api/v1/strategies + /research/strategies builder + /chart trade overlay (markers + green/red position boxes). Schema applied to prod manually |
 | **#20** | Period 2 backtest engine (B1–B7) | ✅ B1–B5 + B7 shipped 2026-07-19 | Engine + analysis + /api/v1/backtest + /research/backtest (form) + /research/backtest/canvas (node UI). Only **B6 remains: FirstRate NQ 1m purchase + bootstrap_csv.py load** — until then runs cover ~3 months of yfinance data and seasonality/Monte Carlo conclusions are not decision-grade |
 
 Everything else is in §7 (optimisation) or §8 (Period 2 design direction).
