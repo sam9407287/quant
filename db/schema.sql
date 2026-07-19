@@ -299,3 +299,22 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
 
 CREATE INDEX IF NOT EXISTS backtest_trades_run_idx
     ON backtest_trades (run_id, session_date);
+
+-- =============================================================
+-- Strategy definitions (ADR-004)
+-- =============================================================
+-- One row per saved strategy template. The full rule set (entry/exit
+-- conditions, optional SL/TP bracket, timeframe, default lookback)
+-- lives in `definition` as JSONB, validated by the Pydantic
+-- StrategyDefinition schema at the API boundary.
+CREATE TABLE IF NOT EXISTS strategies (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    name        TEXT        NOT NULL,
+    description TEXT,
+    definition  JSONB       NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS strategies_created_at_idx
+    ON strategies (created_at DESC);

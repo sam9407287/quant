@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import backtest, coverage, kbars, ml, roll_calendar
+from app.api import backtest, coverage, kbars, ml, roll_calendar, strategies
 from app.core.config import get_settings
 
 _settings = get_settings()
@@ -45,6 +45,7 @@ app.include_router(coverage.router)
 app.include_router(roll_calendar.router)
 app.include_router(ml.router)
 app.include_router(backtest.router)
+app.include_router(strategies.router)
 
 
 @app.get("/health", tags=["system"], summary="Health check")

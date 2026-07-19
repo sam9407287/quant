@@ -1,6 +1,8 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# research/ holds ad-hoc sweep scripts and result CSVs — not production code
+extend-exclude = ["research"]
 
 [tool.ruff.lint]
 # TCH removed: FastAPI requires real imports for dependency injection,

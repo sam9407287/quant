@@ -117,6 +117,8 @@ async def _truncate_test_state(engine) -> None:
         # backtest_trades cascades from backtest_runs.
         with contextlib.suppress(Exception):
             await conn.execute(text("TRUNCATE backtest_runs CASCADE"))
+        with contextlib.suppress(Exception):
+            await conn.execute(text("TRUNCATE strategies"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -451,5 +453,119 @@ class TestBacktestAPI:
                     "/api/v1/backtest/runs/00000000-0000-0000-0000-000000000000"
                 )
                 assert missing.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy API integration tests (ADR-004)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STRATEGY_BODY = {
+    "name": "breakout above 18021.5",
+    "description": "integration fixture",
+    "definition": {
+        "timeframe": "1m",
+        "default_lookback_days": 30,
+        "entry_long": {
+            "op": "gt",
+            "left": {"kind": "price"},
+            "right": {"kind": "const", "value": 18021.5},
+        },
+        "sl": {"mode": "points", "value": 100.0},
+    },
+}
+
+
+class TestStrategiesAPI:
+    @pytest.mark.asyncio
+    async def test_crud_and_evaluate(self, session: AsyncSession) -> None:
+        from app.db.session import get_db
+        from app.main import app
+
+        # _make_bars: closes 18021..18025 rising, opens 18001..18005.
+        df = validate(_make_bars("NQ", n=5))
+        await upsert_bars(session, df, "NQ", "test")
+
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                created = await client.post("/api/v1/strategies", json=_STRATEGY_BODY)
+                assert created.status_code == 200, created.text
+                sid = created.json()["id"]
+                assert created.json()["definition"]["timeframe"] == "1m"
+
+                listed = await client.get("/api/v1/strategies")
+                assert sid in [s["id"] for s in listed.json()]
+
+                # close 18022 (bar 2) > 18021.5 → entry at bar 3 OPEN 18003.
+                ev = await client.post(
+                    f"/api/v1/strategies/{sid}/evaluate",
+                    json={
+                        "instrument": "NQ",
+                        "start": "2024-01-02T00:00:00Z",
+                        "end": "2024-01-03T00:00:00Z",
+                        "adjustment": "raw",
+                    },
+                )
+                assert ev.status_code == 200, ev.text
+                body = ev.json()
+                assert body["bar_count"] == 5
+                assert body["metrics"]["trade_count"] == 1
+                [trade] = body["trades"]
+                assert trade["direction"] == "long"
+                assert trade["entry_price"] == 18003.0
+                assert trade["exit_reason"] == "end"
+                assert trade["sl_level"] == 18003.0 - 100.0
+                assert trade["tp_level"] is None
+
+                updated = await client.put(
+                    f"/api/v1/strategies/{sid}",
+                    json={**_STRATEGY_BODY, "name": "renamed"},
+                )
+                assert updated.status_code == 200
+                assert updated.json()["name"] == "renamed"
+
+                gone = await client.delete(f"/api/v1/strategies/{sid}")
+                assert gone.status_code == 200
+                assert (await client.get(f"/api/v1/strategies/{sid}")).status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_missing_strategy_and_empty_range(
+        self, session: AsyncSession
+    ) -> None:
+        from app.db.session import get_db
+        from app.main import app
+
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                missing = await client.post(
+                    "/api/v1/strategies/00000000-0000-0000-0000-000000000000/evaluate",
+                    json={
+                        "instrument": "NQ",
+                        "start": "2024-01-02T00:00:00Z",
+                        "end": "2024-01-03T00:00:00Z",
+                    },
+                )
+                assert missing.status_code == 404
+
+                created = await client.post("/api/v1/strategies", json=_STRATEGY_BODY)
+                sid = created.json()["id"]
+                empty = await client.post(
+                    f"/api/v1/strategies/{sid}/evaluate",
+                    json={
+                        "instrument": "NQ",
+                        "start": "2030-01-01T00:00:00Z",
+                        "end": "2030-01-02T00:00:00Z",
+                    },
+                )
+                assert empty.status_code == 400
         finally:
             app.dependency_overrides.clear()
