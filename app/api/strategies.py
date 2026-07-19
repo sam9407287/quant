@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependency import CurrentUser, get_current_user
 from app.backtest.analysis import equity_curve, summarize
 from app.backtest.types import DayResult
 from app.core.instruments import Symbol as Instrument
@@ -49,6 +50,7 @@ class StrategyRecord(BaseModel):
     name: str
     description: str | None
     definition: dict[str, Any]
+    owner_email: str | None = None  # populated for admins (LEFT JOIN users)
 
 
 class TradeModel(BaseModel):
@@ -132,13 +134,16 @@ def _metrics(trades: list[Trade]) -> MetricsPoints:
 
 @router.post("", response_model=StrategyRecord, summary="Create a strategy")
 async def create(
-    body: StrategyCreate, db: AsyncSession = Depends(get_db)
+    body: StrategyCreate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> StrategyRecord:
     strategy_id = await insert_strategy(
         db,
         name=body.name,
         description=body.description,
         definition=body.definition.model_dump(mode="json"),
+        owner_id=user.id,
     )
     row = await get_strategy(db, strategy_id)
     assert row is not None
@@ -149,13 +154,19 @@ async def create(
 async def list_all(
     limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> list[StrategyRecord]:
-    return [StrategyRecord(**r) for r in await list_strategies(db, limit=limit)]
+    rows = await list_strategies(db, limit=limit, owner_id=user.owner_filter)
+    return [StrategyRecord(**r) for r in rows]
 
 
 @router.get("/{strategy_id}", response_model=StrategyRecord, summary="Fetch one strategy")
-async def get_one(strategy_id: str, db: AsyncSession = Depends(get_db)) -> StrategyRecord:
-    row = await get_strategy(db, strategy_id)
+async def get_one(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> StrategyRecord:
+    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     return StrategyRecord(**row)
@@ -163,7 +174,10 @@ async def get_one(strategy_id: str, db: AsyncSession = Depends(get_db)) -> Strat
 
 @router.put("/{strategy_id}", response_model=StrategyRecord, summary="Update a strategy")
 async def update(
-    strategy_id: str, body: StrategyCreate, db: AsyncSession = Depends(get_db)
+    strategy_id: str,
+    body: StrategyCreate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> StrategyRecord:
     ok = await update_strategy(
         db,
@@ -171,6 +185,7 @@ async def update(
         name=body.name,
         description=body.description,
         definition=body.definition.model_dump(mode="json"),
+        owner_id=user.owner_filter,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="strategy not found")
@@ -180,8 +195,12 @@ async def update(
 
 
 @router.delete("/{strategy_id}", summary="Delete a strategy")
-async def delete(strategy_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
-    if not await delete_strategy(db, strategy_id):
+async def delete(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, str]:
+    if not await delete_strategy(db, strategy_id, owner_id=user.owner_filter):
         raise HTTPException(status_code=404, detail="strategy not found")
     return {"status": "deleted"}
 
@@ -195,8 +214,9 @@ async def evaluate_strategy(
     strategy_id: str,
     body: EvaluateRequest,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> EvaluateResponse:
-    row = await get_strategy(db, strategy_id)
+    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     defn = StrategyDefinition.model_validate(row["definition"])

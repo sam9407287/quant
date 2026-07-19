@@ -318,3 +318,27 @@ CREATE TABLE IF NOT EXISTS strategies (
 
 CREATE INDEX IF NOT EXISTS strategies_created_at_idx
     ON strategies (created_at DESC);
+
+-- =============================================================
+-- Users & ownership (ADR-005)
+-- =============================================================
+-- One row per Google account that has signed in. `google_sub` is
+-- Google's stable subject id (emails can change); role is derived from
+-- the ADMIN_EMAILS allowlist at sign-in time and re-synced every login.
+CREATE TABLE IF NOT EXISTS users (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    google_sub  TEXT        NOT NULL UNIQUE,
+    email       TEXT        NOT NULL,
+    name        TEXT,
+    picture     TEXT,
+    role        TEXT        NOT NULL DEFAULT 'user'
+);
+
+-- Per-user ownership. NULL owner_id = legacy rows created before auth
+-- existed; visible to admins only once filtering is on.
+ALTER TABLE strategies    ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
+
+CREATE INDEX IF NOT EXISTS strategies_owner_idx    ON strategies (owner_id);
+CREATE INDEX IF NOT EXISTS backtest_runs_owner_idx ON backtest_runs (owner_id);

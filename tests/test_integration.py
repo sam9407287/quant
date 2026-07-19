@@ -118,7 +118,9 @@ async def _truncate_test_state(engine) -> None:
         with contextlib.suppress(Exception):
             await conn.execute(text("TRUNCATE backtest_runs CASCADE"))
         with contextlib.suppress(Exception):
-            await conn.execute(text("TRUNCATE strategies"))
+            await conn.execute(text("TRUNCATE strategies CASCADE"))
+        with contextlib.suppress(Exception):
+            await conn.execute(text("TRUNCATE users CASCADE"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +155,32 @@ async def session(db):
     """Backwards-compatible alias for tests that only need the session."""
     _engine, s = db
     yield s
+
+
+async def _mk_user(session, email: str, role: str = "user"):
+    """Insert a users row and return it as a CurrentUser for overrides."""
+    from app.auth.dependency import CurrentUser
+
+    row = (
+        await session.execute(
+            text(
+                "INSERT INTO users (google_sub, email, role) "
+                "VALUES (:s, :e, :r) RETURNING id::text, email, role"
+            ),
+            {"s": f"sub-{email}", "e": email, "r": role},
+        )
+    ).one()
+    await session.commit()
+    return CurrentUser(id=row[0], email=row[1], role=row[2])
+
+
+def _override_auth(app, session, user) -> None:
+    """Route get_db to the test session and get_current_user to `user`."""
+    from app.auth.dependency import get_current_user
+    from app.db.session import get_db
+
+    app.dependency_overrides[get_db] = lambda: session
+    app.dependency_overrides[get_current_user] = lambda: user
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -367,13 +395,12 @@ _BACKTEST_PARAMS = {
 class TestBacktestAPI:
     @pytest.mark.asyncio
     async def test_run_persist_and_read_back(self, session: AsyncSession) -> None:
-        from app.db.session import get_db
         from app.main import app
 
         df = validate(_backtest_session_bars())
         await upsert_bars(session, df, "NQ", "test")
 
-        app.dependency_overrides[get_db] = lambda: session
+        _override_auth(app, session, await _mk_user(session, "admin@test.io", "admin"))
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -434,10 +461,9 @@ class TestBacktestAPI:
 
     @pytest.mark.asyncio
     async def test_run_with_no_data_is_400(self, session: AsyncSession) -> None:
-        from app.db.session import get_db
         from app.main import app
 
-        app.dependency_overrides[get_db] = lambda: session
+        _override_auth(app, session, await _mk_user(session, "admin@test.io", "admin"))
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -480,14 +506,13 @@ _STRATEGY_BODY = {
 class TestStrategiesAPI:
     @pytest.mark.asyncio
     async def test_crud_and_evaluate(self, session: AsyncSession) -> None:
-        from app.db.session import get_db
         from app.main import app
 
         # _make_bars: closes 18021..18025 rising, opens 18001..18005.
         df = validate(_make_bars("NQ", n=5))
         await upsert_bars(session, df, "NQ", "test")
 
-        app.dependency_overrides[get_db] = lambda: session
+        _override_auth(app, session, await _mk_user(session, "admin@test.io", "admin"))
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -538,10 +563,9 @@ class TestStrategiesAPI:
     async def test_evaluate_missing_strategy_and_empty_range(
         self, session: AsyncSession
     ) -> None:
-        from app.db.session import get_db
         from app.main import app
 
-        app.dependency_overrides[get_db] = lambda: session
+        _override_auth(app, session, await _mk_user(session, "admin@test.io", "admin"))
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -567,5 +591,129 @@ class TestStrategiesAPI:
                     },
                 )
                 assert empty.status_code == 400
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ownership isolation tests (ADR-005)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestOwnershipIsolation:
+    @pytest.mark.asyncio
+    async def test_strategies_isolated_between_users(self, session: AsyncSession) -> None:
+        from app.auth.dependency import get_current_user
+        from app.main import app
+
+        alice = await _mk_user(session, "alice@test.io")
+        bob = await _mk_user(session, "bob@test.io")
+        admin = await _mk_user(session, "admin@test.io", "admin")
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                _override_auth(app, session, alice)
+                created = await client.post("/api/v1/strategies", json=_STRATEGY_BODY)
+                assert created.status_code == 200, created.text
+                sid = created.json()["id"]
+                assert (await client.get("/api/v1/strategies")).json() != []
+
+                # Bob sees nothing and cannot touch Alice's strategy.
+                app.dependency_overrides[get_current_user] = lambda: bob
+                assert (await client.get("/api/v1/strategies")).json() == []
+                assert (await client.get(f"/api/v1/strategies/{sid}")).status_code == 404
+                assert (
+                    await client.put(f"/api/v1/strategies/{sid}", json=_STRATEGY_BODY)
+                ).status_code == 404
+                assert (await client.delete(f"/api/v1/strategies/{sid}")).status_code == 404
+                ev = await client.post(
+                    f"/api/v1/strategies/{sid}/evaluate",
+                    json={
+                        "instrument": "NQ",
+                        "start": "2024-01-02T00:00:00Z",
+                        "end": "2024-01-03T00:00:00Z",
+                    },
+                )
+                assert ev.status_code == 404
+
+                # Admin sees Alice's strategy with owner attribution.
+                app.dependency_overrides[get_current_user] = lambda: admin
+                listed = (await client.get("/api/v1/strategies")).json()
+                assert [s["id"] for s in listed] == [sid]
+                assert listed[0]["owner_email"] == "alice@test.io"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_backtest_runs_isolated_between_users(
+        self, session: AsyncSession
+    ) -> None:
+        from app.auth.dependency import get_current_user
+        from app.main import app
+
+        alice = await _mk_user(session, "alice@test.io")
+        bob = await _mk_user(session, "bob@test.io")
+        admin = await _mk_user(session, "admin@test.io", "admin")
+
+        df = validate(_backtest_session_bars())
+        await upsert_bars(session, df, "NQ", "test")
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                _override_auth(app, session, alice)
+                resp = await client.post(
+                    "/api/v1/backtest/runs", json={"params": _BACKTEST_PARAMS}
+                )
+                assert resp.status_code == 200, resp.text
+                run_id = resp.json()["run_id"]
+
+                app.dependency_overrides[get_current_user] = lambda: bob
+                assert (await client.get("/api/v1/backtest/runs")).json() == []
+                assert (
+                    await client.get(f"/api/v1/backtest/runs/{run_id}")
+                ).status_code == 404
+                assert (
+                    await client.get(f"/api/v1/backtest/runs/{run_id}/montecarlo")
+                ).status_code == 404
+
+                app.dependency_overrides[get_current_user] = lambda: admin
+                listed = (await client.get("/api/v1/backtest/runs")).json()
+                assert [r["id"] for r in listed] == [run_id]
+                assert listed[0]["owner_email"] == "alice@test.io"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_request_is_rejected(
+        self, session: AsyncSession
+    ) -> None:
+        from app.db.session import get_db
+        from app.main import app
+
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/api/v1/strategies", json=_STRATEGY_BODY)
+                # Test env has no GOOGLE_OAUTH_CLIENT_ID → the auth gate
+                # answers 503 (unconfigured); with a client id set and no
+                # token it would be 401. Either way: rejected.
+                assert resp.status_code in (401, 503)
+
+                # Read-only market data stays public.
+                pub = await client.get(
+                    "/api/v1/kbars",
+                    params={
+                        "instrument": "NQ",
+                        "timeframe": "1m",
+                        "start": "2024-01-02T00:00:00Z",
+                        "end": "2024-01-03T00:00:00Z",
+                    },
+                )
+                assert pub.status_code == 200
         finally:
             app.dependency_overrides.clear()

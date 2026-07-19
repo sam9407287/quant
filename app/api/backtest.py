@@ -15,6 +15,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependency import CurrentUser, get_current_user
 from app.backtest.analysis import equity_curve, monte_carlo, seasonality, summarize
 from app.backtest.engine import run_backtest
 from app.backtest.loader import load_sessions
@@ -57,6 +58,7 @@ def _equity_points(results: list[DayResult]) -> list[EquityPoint]:
 async def create_run(
     req: RunRequest,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> RunResponse:
     started = time.perf_counter()
     try:
@@ -77,6 +79,7 @@ async def create_run(
         results=results,
         runtime_ms=runtime_ms,
         notes=req.notes,
+        owner_id=user.id,
     )
     logger.info(
         "backtest.run: id=%s instrument=%s sessions=%d runtime=%dms",
@@ -99,8 +102,9 @@ async def create_run(
 async def list_recent(
     limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> list[RunRecord]:
-    rows = await list_runs(db, limit=limit)
+    rows = await list_runs(db, limit=limit, owner_id=user.owner_filter)
     return [RunRecord(**r) for r in rows]
 
 
@@ -112,8 +116,9 @@ async def list_recent(
 async def get_one(
     run_id: str,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> RunDetail:
-    row = await get_run(db, run_id)
+    row = await get_run(db, run_id, owner_id=user.owner_filter)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
     trade_rows = await get_trades(db, run_id)
@@ -134,7 +139,10 @@ async def get_seasonality(
     run_id: str,
     bucket: str = Query(default="month", pattern="^(month|weekday)$"),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> SeasonalityResponse:
+    if await get_run(db, run_id, owner_id=user.owner_filter) is None:
+        raise HTTPException(status_code=404, detail="run not found")
     trade_rows = await get_trades(db, run_id)
     if not trade_rows:
         raise HTTPException(status_code=404, detail="run not found or has no sessions")
@@ -158,7 +166,10 @@ async def get_montecarlo(
     horizon_days: int | None = Query(default=None, ge=1, le=10_000),
     initial_capital: float | None = Query(default=None, gt=0),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> MonteCarloResponse:
+    if await get_run(db, run_id, owner_id=user.owner_filter) is None:
+        raise HTTPException(status_code=404, detail="run not found")
     trade_rows = await get_trades(db, run_id)
     if not trade_rows:
         raise HTTPException(status_code=404, detail="run not found or has no sessions")

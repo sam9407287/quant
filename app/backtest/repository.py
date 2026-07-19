@@ -26,13 +26,14 @@ async def insert_run(
     results: list[DayResult],
     runtime_ms: int,
     notes: str | None = None,
+    owner_id: str | None = None,
 ) -> str:
     """Insert one run and all its session rows atomically; return run id."""
     run_stmt = text(
         """
-        INSERT INTO backtest_runs (instrument, params, metrics, runtime_ms, notes)
+        INSERT INTO backtest_runs (instrument, params, metrics, runtime_ms, notes, owner_id)
         VALUES (:instrument, CAST(:params AS JSONB), CAST(:metrics AS JSONB),
-                :runtime_ms, :notes)
+                :runtime_ms, :notes, CAST(:owner AS UUID))
         RETURNING id::text
         """
     )
@@ -45,6 +46,7 @@ async def insert_run(
                 "metrics": json.dumps(metrics),
                 "runtime_ms": runtime_ms,
                 "notes": notes,
+                "owner": owner_id,
             },
         )
     ).scalar_one()
@@ -85,30 +87,40 @@ async def insert_run(
     return str(run_id)
 
 
-async def list_runs(session: AsyncSession, limit: int = 50) -> list[dict[str, Any]]:
+_OWNER_COND = "AND (CAST(:owner AS UUID) IS NULL OR r.owner_id = CAST(:owner AS UUID))"
+
+
+async def list_runs(
+    session: AsyncSession, limit: int = 50, owner_id: str | None = None
+) -> list[dict[str, Any]]:
     stmt = text(
-        """
-        SELECT id::text AS id, created_at, instrument, params, metrics,
-               runtime_ms, notes
-        FROM backtest_runs
-        ORDER BY created_at DESC
+        f"""
+        SELECT r.id::text AS id, r.created_at, r.instrument, r.params,
+               r.metrics, r.runtime_ms, r.notes, u.email AS owner_email
+        FROM backtest_runs r
+        LEFT JOIN users u ON u.id = r.owner_id
+        WHERE TRUE {_OWNER_COND}
+        ORDER BY r.created_at DESC
         LIMIT :limit
-        """
+        """  # noqa: S608 — fixed fragment, params bound
     )
-    rows = (await session.execute(stmt, {"limit": limit})).fetchall()
+    rows = (await session.execute(stmt, {"limit": limit, "owner": owner_id})).fetchall()
     return [dict(row._mapping) for row in rows]
 
 
-async def get_run(session: AsyncSession, run_id: str) -> dict[str, Any] | None:
+async def get_run(
+    session: AsyncSession, run_id: str, owner_id: str | None = None
+) -> dict[str, Any] | None:
     stmt = text(
-        """
-        SELECT id::text AS id, created_at, instrument, params, metrics,
-               runtime_ms, notes
-        FROM backtest_runs
-        WHERE id = CAST(:id AS UUID)
-        """
+        f"""
+        SELECT r.id::text AS id, r.created_at, r.instrument, r.params,
+               r.metrics, r.runtime_ms, r.notes, u.email AS owner_email
+        FROM backtest_runs r
+        LEFT JOIN users u ON u.id = r.owner_id
+        WHERE r.id = CAST(:id AS UUID) {_OWNER_COND}
+        """  # noqa: S608
     )
-    row = (await session.execute(stmt, {"id": run_id})).fetchone()
+    row = (await session.execute(stmt, {"id": run_id, "owner": owner_id})).fetchone()
     return dict(row._mapping) if row else None
 
 

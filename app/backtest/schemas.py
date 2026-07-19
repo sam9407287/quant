@@ -75,6 +75,7 @@ class RunRecord(BaseModel):
     metrics: dict[str, Any]
     runtime_ms: int
     notes: str | None
+    owner_email: str | None = None  # populated for admins (LEFT JOIN users)
 
 
 class RunDetail(RunRecord):

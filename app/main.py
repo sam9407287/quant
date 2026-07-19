@@ -35,8 +35,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origins,
     allow_credentials=True,
-    # POST is needed for /api/v1/ml/train; OPTIONS is the CORS preflight.
-    allow_methods=["GET", "POST", "OPTIONS"],
+    # PUT/DELETE are needed for /api/v1/strategies; OPTIONS is the preflight.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

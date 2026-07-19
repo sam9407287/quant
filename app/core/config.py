@@ -62,6 +62,11 @@ class Settings(BaseSettings):
 
     # Security
     api_secret_key: str = "changeme"
+    # Google Sign-In: the OAuth Web client ID the frontend obtains ID
+    # tokens for. Empty string = auth endpoints answer 503 (unconfigured).
+    google_oauth_client_id: str = ""
+    # Emails granted the admin role on sign-in (see-everything access).
+    admin_emails: Annotated[list[str], NoDecode] = ["sam9407287@gmail.com"]
 
     # Notifications (optional — leave empty to disable)
     notify_webhook_url: str = ""
@@ -74,7 +79,7 @@ class Settings(BaseSettings):
             return [s.upper() for s in _parse_list_str(v)]
         return [s.upper() for s in v]
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "admin_emails", mode="before")
     @classmethod
     def split_origins(cls, v: str | list[str]) -> list[str]:
         """Accept comma-separated string, JSON array string, or a list."""
