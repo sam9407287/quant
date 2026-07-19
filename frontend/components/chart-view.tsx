@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
+import { GOOGLE_CLIENT_ID, useAuth } from "@/lib/auth";
 import { fetchKBars } from "@/lib/api";
 import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
 import { evaluateStrategy, listStrategies } from "@/lib/strategies";
@@ -46,6 +47,8 @@ function toUtcSeconds(iso: string): UTCTimestamp {
 }
 
 export function ChartView({ initialInstrument, initialTimeframe }: Props) {
+  const { user } = useAuth();
+  const authed = !GOOGLE_CLIENT_ID || user !== null;
   const [instrument, setInstrument] = useState<Instrument>(initialInstrument);
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [bars, setBars] = useState<KBar[] | null>(null);
@@ -120,12 +123,17 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     };
   }, []);
 
-  // Saved strategies for the overlay picker.
+  // Saved strategies for the overlay picker (only once signed in).
   useEffect(() => {
+    if (!authed) {
+      setStrategies([]);
+      setStrategyId("");
+      return;
+    }
     listStrategies()
       .then(setStrategies)
       .catch(() => setStrategies([]));
-  }, []);
+  }, [authed]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -331,10 +339,11 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         <select
           value={strategyId}
           onChange={(e) => selectStrategy(e.target.value)}
-          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none"
-          title="Overlay a saved strategy"
+          disabled={!authed}
+          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none disabled:opacity-50"
+          title={authed ? "Overlay a saved strategy" : "Sign in to overlay your strategies"}
         >
-          <option value="">No strategy</option>
+          <option value="">{authed ? "No strategy" : "Sign in for strategies"}</option>
           {strategies.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} ({s.definition.timeframe})

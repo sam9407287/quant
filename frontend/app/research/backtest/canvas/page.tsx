@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { RequireAuth } from "@/components/auth/require-auth";
+
 import { BacktestCanvas } from "@/components/backtest/canvas";
 
 export default function BacktestCanvasPage() {
@@ -16,7 +18,9 @@ export default function BacktestCanvasPage() {
           sends — same engine, same API.
         </p>
       </header>
-      <BacktestCanvas />
+      <RequireAuth>
+        <BacktestCanvas />
+      </RequireAuth>
     </div>
   );
 }

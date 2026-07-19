@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { RequireAuth } from "@/components/auth/require-auth";
+
 import { BacktestWorkbench } from "@/components/backtest/form";
 
 export default function BacktestPage() {
@@ -23,7 +25,9 @@ export default function BacktestPage() {
           </p>
         </div>
       </header>
-      <BacktestWorkbench />
+      <RequireAuth>
+        <BacktestWorkbench />
+      </RequireAuth>
     </div>
   );
 }

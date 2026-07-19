@@ -1,6 +1,8 @@
 // Typed client for /api/v1/backtest — hand-maintained mirror of
 // app/backtest/{params,schemas}.py, same convention as lib/ml.ts.
 
+import { authHeaders } from "@/lib/http";
+
 export interface SessionClock {
   tz: string;
   range_start: string; // "HH:MM"
@@ -107,7 +109,7 @@ function apiUrl(path: string): string {
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), {
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", ...authHeaders() },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -122,7 +124,11 @@ export async function runBacktest(
 ): Promise<RunResponse> {
   const res = await fetch(apiUrl("/api/v1/backtest/runs"), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...authHeaders(),
+    },
     body: JSON.stringify({ params, notes: notes || null }),
   });
   if (!res.ok) {

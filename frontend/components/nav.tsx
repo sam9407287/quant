@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { AuthButton } from "@/components/auth/sign-in";
+
 const links = [
   { href: "/", label: "Dashboard" },
   { href: "/coverage", label: "Coverage" },
@@ -28,6 +30,7 @@ export function Nav() {
             </Link>
           ))}
         </nav>
+        <AuthButton />
       </div>
     </header>
   );

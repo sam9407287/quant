@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { RequireAuth } from "@/components/auth/require-auth";
+
 import { ResearchWizard } from "@/components/research/wizard";
 
 export default function ResearchPage() {
@@ -22,7 +24,9 @@ export default function ResearchPage() {
           </p>
         </div>
       </header>
-      <ResearchWizard />
+      <RequireAuth>
+        <ResearchWizard />
+      </RequireAuth>
     </div>
   );
 }

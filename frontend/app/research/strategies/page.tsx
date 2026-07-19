@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { RequireAuth } from "@/components/auth/require-auth";
+
 import { StrategyManager } from "@/components/strategies/builder";
 
 export default function StrategiesPage() {
@@ -17,7 +19,9 @@ export default function StrategiesPage() {
           to see every trade, with position boxes for the bracket.
         </p>
       </header>
-      <StrategyManager />
+      <RequireAuth>
+        <StrategyManager />
+      </RequireAuth>
     </div>
   );
 }

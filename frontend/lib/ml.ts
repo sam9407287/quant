@@ -1,3 +1,5 @@
+import { authHeaders } from "@/lib/http";
+
 /**
  * ML workbench types and API helpers.
  *
@@ -163,7 +165,11 @@ function apiUrl(path: string): string {
 export async function trainModel(cfg: TrainConfig): Promise<TrainResponse> {
   const res = await fetch(apiUrl("/api/v1/ml/train"), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...authHeaders(),
+    },
     body: JSON.stringify(cfg),
   });
   if (!res.ok) {

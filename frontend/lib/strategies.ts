@@ -1,6 +1,7 @@
 // Typed client for /api/v1/strategies — hand-maintained mirror of
 // app/strategies/schemas.py + app/api/strategies.py.
 
+import { authHeaders } from "@/lib/http";
 import type { Timeframe } from "@/lib/types";
 
 export type OperandKind =
@@ -94,8 +95,13 @@ function apiUrl(path: string): string {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiUrl(path), {
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
