@@ -8,6 +8,8 @@ from typing import Annotated
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.core.instruments import ALL_SYMBOLS as _ALL_SYMBOLS
+
 
 def _parse_list_str(raw: str) -> list[str]:
     """Parse a list from an env-var string in either JSON or CSV form.
@@ -47,11 +49,8 @@ class Settings(BaseSettings):
     # complex types — without it the comma-separated env-file form (used by
     # local .env) would be rejected before our validator runs. Railway sets
     # the same vars as JSON arrays; both shapes are normalised below.
-    fetch_instruments: Annotated[list[str], NoDecode] = [
-        "NQ", "ES", "YM", "RTY",   # equity indices
-        "GC", "SI", "HG",           # metals
-        "CL", "NG",                 # energy
-    ]
+    # Default = every registry symbol; narrow via FETCH_INSTRUMENTS env.
+    fetch_instruments: Annotated[list[str], NoDecode] = list(_ALL_SYMBOLS)
     fetch_overlap_days: int = 7
     fetch_cron: str = "0 0 * * 1-5"
 

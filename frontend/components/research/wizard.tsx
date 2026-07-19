@@ -15,6 +15,7 @@ import {
 } from "@/lib/ml";
 import type { Instrument, Timeframe } from "@/lib/types";
 import {
+  ASSET_CLASSES,
   ASSET_CLASS_LABEL,
   INSTRUMENTS_BY_CLASS,
   TIMEFRAMES,
@@ -143,7 +144,7 @@ export function ResearchWizard() {
           <div className="lg:col-span-2">
             <label className={LABEL_CLASS}>Instrument</label>
             <div className="space-y-1.5">
-              {(["equity_index", "metal", "energy"] as const).map((cls) => (
+              {ASSET_CLASSES.map((cls) => (
                 <div key={cls} className="flex items-center gap-1.5">
                   <span className="w-16 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
                     {ASSET_CLASS_LABEL[cls]}

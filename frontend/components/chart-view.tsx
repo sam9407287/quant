@@ -17,9 +17,11 @@ import { GOOGLE_CLIENT_ID, useAuth } from "@/lib/auth";
 import { fetchKBars } from "@/lib/api";
 import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
 import { evaluateStrategy, listStrategies } from "@/lib/strategies";
-import type { Instrument, KBar, Timeframe } from "@/lib/types";
+import type { AssetClass, Instrument, KBar, Timeframe } from "@/lib/types";
 import {
+  ASSET_CLASSES,
   ASSET_CLASS_LABEL,
+  INSTRUMENT_META,
   INSTRUMENTS_BY_CLASS,
   TIMEFRAMES,
 } from "@/lib/types";
@@ -50,6 +52,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const { user } = useAuth();
   const authed = !GOOGLE_CLIENT_ID || user !== null;
   const [instrument, setInstrument] = useState<Instrument>(initialInstrument);
+  const [activeClass, setActiveClass] = useState<AssetClass>(
+    INSTRUMENT_META[initialInstrument].assetClass,
+  );
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [bars, setBars] = useState<KBar[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -296,28 +301,51 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg-panel p-3">
-        {(["equity_index", "metal", "energy"] as const).map((cls) => (
-          <div key={cls} className="flex items-center gap-1">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+      <div className="space-y-2 rounded-lg border border-border bg-bg-panel p-3">
+        {/* Level 1: asset-class tabs */}
+        <div className="flex flex-wrap gap-1">
+          {ASSET_CLASSES.map((cls) => (
+            <button
+              key={cls}
+              type="button"
+              onClick={() => {
+                setActiveClass(cls);
+                // Switching category selects its first instrument so the
+                // chart always reflects the visible pill row.
+                const first = INSTRUMENTS_BY_CLASS[cls][0];
+                if (first && INSTRUMENT_META[instrument].assetClass !== cls) {
+                  setInstrument(first);
+                }
+              }}
+              className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
+                activeClass === cls
+                  ? "bg-accent-blue/20 text-accent-blue"
+                  : "text-zinc-500 hover:bg-bg-hover hover:text-zinc-200"
+              }`}
+            >
               {ASSET_CLASS_LABEL[cls]}
-            </span>
-            {INSTRUMENTS_BY_CLASS[cls].map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setInstrument(s)}
-                className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
-                  instrument === s
-                    ? "bg-accent-blue text-white"
-                    : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        ))}
+            </button>
+          ))}
+        </div>
+        {/* Level 2: instruments in the active class + timeframe + strategy */}
+        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-1">
+          {INSTRUMENTS_BY_CLASS[activeClass].map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setInstrument(s)}
+              title={INSTRUMENT_META[s].name}
+              className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
+                instrument === s
+                  ? "bg-accent-blue text-white"
+                  : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
         <div className="h-5 w-px bg-border" />
         <div className="flex gap-1">
           {TIMEFRAMES.map((t) => (
@@ -352,6 +380,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         </select>
         <div className="ml-auto text-xs text-zinc-500">
           {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
+        </div>
         </div>
       </div>
 

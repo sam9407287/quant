@@ -30,12 +30,22 @@ from typing import Literal
 # Adding a symbol: extend this Literal AND add the matching registry row
 # below. mypy will flag any place that still expects the old shorter set.
 Symbol = Literal[
-    "NQ", "ES", "YM", "RTY",   # equity indices
-    "GC", "SI", "HG",           # metals
-    "CL", "NG",                 # energy
+    "NQ", "ES", "YM", "RTY",                  # US equity indices
+    "NKD",                                     # international indices
+    "ZT", "ZF", "ZN", "ZB",                   # rates
+    "6E", "6J", "6B", "6A",                   # FX
+    "GC", "SI", "HG", "PL", "PA",             # metals
+    "CL", "NG", "HO", "RB", "BZ",             # energy
+    "ZC", "ZS", "ZW", "ZL", "ZM",             # grains
+    "KC", "SB", "CC",                          # softs
+    "HE", "LE",                                # livestock
+    "BTC", "ETH",                              # crypto
 ]
 
-AssetClass = Literal["equity_index", "metal", "energy"]
+AssetClass = Literal[
+    "equity_index", "intl_index", "rates", "fx", "metal", "energy",
+    "grain", "soft", "livestock", "crypto",
+]
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,34 @@ INSTRUMENT_REGISTRY: dict[str, InstrumentMeta] = {
     "HG":  InstrumentMeta("HG",  "Copper",              "metal",         "COMEX", "HG=F"),
     "CL":  InstrumentMeta("CL",  "Crude Oil (WTI)",     "energy",        "NYMEX", "CL=F"),
     "NG":  InstrumentMeta("NG",  "Natural Gas",         "energy",        "NYMEX", "NG=F"),
+    # 2026-07-20 expansion (ADR-005 follow-up): every symbol below was
+    # verified to serve 1m bars through yfinance before being added.
+    "NKD": InstrumentMeta("NKD", "Nikkei 225 (USD)",    "intl_index",    "CME",   "NKD=F"),
+    "ZT":  InstrumentMeta("ZT",  "2-Year T-Note",       "rates",         "CBOT",  "ZT=F"),
+    "ZF":  InstrumentMeta("ZF",  "5-Year T-Note",       "rates",         "CBOT",  "ZF=F"),
+    "ZN":  InstrumentMeta("ZN",  "10-Year T-Note",      "rates",         "CBOT",  "ZN=F"),
+    "ZB":  InstrumentMeta("ZB",  "30-Year T-Bond",      "rates",         "CBOT",  "ZB=F"),
+    "6E":  InstrumentMeta("6E",  "Euro FX",             "fx",            "CME",   "6E=F"),
+    "6J":  InstrumentMeta("6J",  "Japanese Yen",        "fx",            "CME",   "6J=F"),
+    "6B":  InstrumentMeta("6B",  "British Pound",       "fx",            "CME",   "6B=F"),
+    "6A":  InstrumentMeta("6A",  "Australian Dollar",   "fx",            "CME",   "6A=F"),
+    "PL":  InstrumentMeta("PL",  "Platinum",            "metal",         "NYMEX", "PL=F"),
+    "PA":  InstrumentMeta("PA",  "Palladium",           "metal",         "NYMEX", "PA=F"),
+    "HO":  InstrumentMeta("HO",  "Heating Oil",         "energy",        "NYMEX", "HO=F"),
+    "RB":  InstrumentMeta("RB",  "RBOB Gasoline",       "energy",        "NYMEX", "RB=F"),
+    "BZ":  InstrumentMeta("BZ",  "Brent Crude",         "energy",        "NYMEX", "BZ=F"),
+    "ZC":  InstrumentMeta("ZC",  "Corn",                "grain",         "CBOT",  "ZC=F"),
+    "ZS":  InstrumentMeta("ZS",  "Soybeans",            "grain",         "CBOT",  "ZS=F"),
+    "ZW":  InstrumentMeta("ZW",  "Wheat",               "grain",         "CBOT",  "ZW=F"),
+    "ZL":  InstrumentMeta("ZL",  "Soybean Oil",         "grain",         "CBOT",  "ZL=F"),
+    "ZM":  InstrumentMeta("ZM",  "Soybean Meal",        "grain",         "CBOT",  "ZM=F"),
+    "KC":  InstrumentMeta("KC",  "Coffee",              "soft",          "ICE",   "KC=F"),
+    "SB":  InstrumentMeta("SB",  "Sugar No. 11",        "soft",          "ICE",   "SB=F"),
+    "CC":  InstrumentMeta("CC",  "Cocoa",               "soft",          "ICE",   "CC=F"),
+    "HE":  InstrumentMeta("HE",  "Lean Hogs",           "livestock",     "CME",   "HE=F"),
+    "LE":  InstrumentMeta("LE",  "Live Cattle",         "livestock",     "CME",   "LE=F"),
+    "BTC": InstrumentMeta("BTC", "Bitcoin",             "crypto",        "CME",   "BTC=F"),
+    "ETH": InstrumentMeta("ETH", "Ether",               "crypto",        "CME",   "ETH=F"),
 }
 
 

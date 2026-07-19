@@ -3,6 +3,7 @@ import Link from "next/link";
 import { fetchCoverage } from "@/lib/api";
 import type { CoverageRecord } from "@/lib/types";
 import {
+  ASSET_CLASSES,
   ASSET_CLASS_LABEL,
   INSTRUMENT_META,
   INSTRUMENTS_BY_CLASS,
@@ -45,7 +46,7 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {(["equity_index", "metal", "energy"] as const).map((cls) => (
+      {ASSET_CLASSES.map((cls) => (
         <section key={cls} className="space-y-3">
           <h2 className="font-mono text-xs uppercase tracking-wider text-zinc-500">
             {ASSET_CLASS_LABEL[cls]}

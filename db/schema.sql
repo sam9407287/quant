@@ -229,9 +229,16 @@ INSERT INTO data_coverage (instrument, timeframe)
 SELECT i.instrument, t.timeframe
 FROM
     (VALUES
-        ('NQ'), ('ES'), ('YM'), ('RTY'),   -- equity indices
-        ('GC'), ('SI'), ('HG'),             -- metals (COMEX)
-        ('CL'), ('NG')                      -- energy (NYMEX)
+        ('NQ'), ('ES'), ('YM'), ('RTY'),            -- US equity indices
+        ('NKD'),                                     -- international indices
+        ('ZT'), ('ZF'), ('ZN'), ('ZB'),             -- rates
+        ('6E'), ('6J'), ('6B'), ('6A'),             -- FX
+        ('GC'), ('SI'), ('HG'), ('PL'), ('PA'),     -- metals
+        ('CL'), ('NG'), ('HO'), ('RB'), ('BZ'),     -- energy
+        ('ZC'), ('ZS'), ('ZW'), ('ZL'), ('ZM'),     -- grains
+        ('KC'), ('SB'), ('CC'),                      -- softs
+        ('HE'), ('LE'),                              -- livestock
+        ('BTC'), ('ETH')                             -- crypto
     ) AS i(instrument),
     (VALUES ('1m'), ('5m'), ('15m'), ('1h'), ('4h'), ('1d'), ('1w')) AS t(timeframe)
 ON CONFLICT DO NOTHING;

@@ -28,19 +28,18 @@ export interface TradeBox {
 interface PixelBox {
   x1: number;
   x2: number;
-  y1: number;
+  y1: number; // entry edge (priceA)
   y2: number;
   kind: "profit" | "risk";
 }
 
+// TradingView position-tool look: flat translucent fills, no border,
+// and a bright line on the shared entry edge (priceA is always entry).
 const FILL: Record<TradeBox["kind"], string> = {
-  profit: "rgba(38, 166, 154, 0.16)",
-  risk: "rgba(239, 83, 80, 0.16)",
+  profit: "rgba(38, 166, 154, 0.22)",
+  risk: "rgba(239, 83, 80, 0.20)",
 };
-const STROKE: Record<TradeBox["kind"], string> = {
-  profit: "rgba(38, 166, 154, 0.55)",
-  risk: "rgba(239, 83, 80, 0.55)",
-};
+const ENTRY_LINE = "rgba(255, 255, 255, 0.75)";
 
 type DrawTarget = Parameters<ISeriesPrimitivePaneRenderer["draw"]>[0];
 
@@ -57,9 +56,13 @@ class BoxesRenderer implements ISeriesPrimitivePaneRenderer {
         if (w <= 0 || h <= 0) continue;
         ctx.fillStyle = FILL[b.kind];
         ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = STROKE[b.kind];
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
+        // Entry line on the shared edge (y1 = entry price).
+        ctx.strokeStyle = ENTRY_LINE;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, b.y1);
+        ctx.lineTo(x + w, b.y1);
+        ctx.stroke();
       }
     });
   }
