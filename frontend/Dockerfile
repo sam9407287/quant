@@ -28,6 +28,13 @@ RUN pnpm install --frozen-lockfile
 # ---------- builder ----------
 FROM base AS builder
 WORKDIR /app
+# NEXT_PUBLIC_* is inlined into the client bundle at build time. Railway
+# passes service variables as build args ONLY when declared as ARG here —
+# without these lines the build silently sees empty values.
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
 RUN pnpm build
