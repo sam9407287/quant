@@ -16,13 +16,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 
 from app.core.instruments import INSTRUMENT_REGISTRY, get_binance_pair
 from app.db.session import AsyncSessionLocal
-from fetcher.pipeline import upsert_bars, validate
+from fetcher.pipeline import (
+    refresh_continuous_aggregates,
+    update_all_coverage,
+    upsert_bars,
+    validate,
+)
 from fetcher.sources.binance_source import BinanceSource
 
 logging.basicConfig(
@@ -86,6 +91,10 @@ async def load_symbol(symbol: str, purge: bool) -> int:
                 "%s %04d-%02d: +%d (skipped %d)", symbol, year, month, inserted, skipped
             )
 
+        # coverage is otherwise only refreshed by the daily fetcher, so a
+        # bulk load would stay invisible on the dashboard until tomorrow.
+        await update_all_coverage(db, symbol, fetch_ok=True)
+
     logger.info("%s: %d rows inserted", symbol, total)
     return total
 
@@ -93,6 +102,13 @@ async def load_symbol(symbol: str, purge: bool) -> int:
 async def main_async(symbols: list[str], purge: bool) -> None:
     for symbol in symbols:
         await load_symbol(symbol, purge)
+
+    # Higher timeframes are Continuous Aggregates; a decade of new 1m
+    # bars needs a refresh window that spans the whole load, not the
+    # 14-day default the daily fetch uses.
+    logger.info("Refreshing continuous aggregates over the full history…")
+    await refresh_continuous_aggregates(window=timedelta(days=365 * 12))
+    logger.info("Done.")
 
 
 def main() -> None:
