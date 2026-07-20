@@ -54,7 +54,28 @@ def _months(start: tuple[int, int], end: tuple[int, int]) -> list[tuple[int, int
     return out
 
 
-async def load_symbol(symbol: str, purge: bool) -> int:
+async def _month_already_loaded(symbol: str, year: int, month: int) -> bool:
+    """True when this month already holds bars — used to make re-runs cheap.
+
+    Each check takes its own short-lived session: a single connection
+    held across a multi-year load is exactly what Railway drops.
+    """
+    lo = datetime(year, month, 1, tzinfo=UTC)
+    hi = datetime(year + 1, 1, 1, tzinfo=UTC) if month == 12 else datetime(year, month + 1, 1, tzinfo=UTC)
+    async with AsyncSessionLocal() as db:
+        count = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM kbars_1m "
+                    "WHERE instrument = :i AND ts >= :lo AND ts < :hi"
+                ),
+                {"i": symbol, "lo": lo, "hi": hi},
+            )
+        ).scalar_one()
+    return bool(count)
+
+
+async def load_symbol(symbol: str, purge: bool, resume: bool = True) -> int:
     """Load one symbol's full archive history; return rows inserted."""
     pair = get_binance_pair(symbol)
     if pair is None:
@@ -66,31 +87,53 @@ async def load_symbol(symbol: str, purge: bool) -> int:
     start = _LISTED_FROM.get(symbol, (2017, 8))
     total = 0
 
-    async with AsyncSessionLocal() as db:
-        if purge:
-            # Used when a symbol switches provider: old rows carry a
-            # different venue's prices and must not be interleaved.
+    if purge:
+        # Used when a symbol switches provider: old rows carry a
+        # different venue's prices and must not be interleaved.
+        async with AsyncSessionLocal() as db:
             result = await db.execute(
                 text("DELETE FROM kbars_1m WHERE instrument = :i"), {"i": symbol}
             )
             await db.commit()
             logger.info("%s: purged %s existing rows", symbol, result.rowcount)  # type: ignore[attr-defined]
 
-        for year, month in _months(start, (today.year, today.month)):
+    current = (today.year, today.month)
+    for year, month in _months(start, current):
+        # The current month is still growing, so never skip it.
+        if resume and not purge and (year, month) != current:
             try:
-                df = source.iter_month(symbol, year, month)
+                if await _month_already_loaded(symbol, year, month):
+                    continue
             except Exception:
-                logger.exception("%s %04d-%02d: download failed", symbol, year, month)
-                continue
-            if df.empty:
-                continue
-            df = validate(df)
-            inserted, skipped = await upsert_bars(db, df, symbol, source="binance")
-            total += inserted
-            logger.info(
-                "%s %04d-%02d: +%d (skipped %d)", symbol, year, month, inserted, skipped
-            )
+                logger.warning("%s %04d-%02d: resume check failed, loading anyway",
+                               symbol, year, month)
+        try:
+            df = source.iter_month(symbol, year, month)
+        except Exception:
+            logger.exception("%s %04d-%02d: download failed", symbol, year, month)
+            continue
+        if df.empty:
+            continue
+        df = validate(df)
+        # One session per month: a dropped connection costs one month,
+        # not the whole multi-year run.
+        for attempt in (1, 2, 3):
+            try:
+                async with AsyncSessionLocal() as db:
+                    inserted, skipped = await upsert_bars(db, df, symbol, source="binance")
+                total += inserted
+                logger.info(
+                    "%s %04d-%02d: +%d (skipped %d)", symbol, year, month, inserted, skipped
+                )
+                break
+            except Exception:
+                if attempt == 3:
+                    logger.exception("%s %04d-%02d: write failed after 3 tries",
+                                     symbol, year, month)
+                else:
+                    await asyncio.sleep(2 * attempt)
 
+    async with AsyncSessionLocal() as db:
         # coverage is otherwise only refreshed by the daily fetcher, so a
         # bulk load would stay invisible on the dashboard until tomorrow.
         await update_all_coverage(db, symbol, fetch_ok=True)
@@ -99,9 +142,9 @@ async def load_symbol(symbol: str, purge: bool) -> int:
     return total
 
 
-async def main_async(symbols: list[str], purge: bool) -> None:
+async def main_async(symbols: list[str], purge: bool, resume: bool = True) -> None:
     for symbol in symbols:
-        await load_symbol(symbol, purge)
+        await load_symbol(symbol, purge, resume)
 
     # Higher timeframes are Continuous Aggregates; a decade of new 1m
     # bars needs a refresh window that spans the whole load, not the
@@ -122,8 +165,13 @@ def main() -> None:
         action="store_true",
         help="delete existing rows for each symbol first (provider switch)",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="re-download months that already hold bars",
+    )
     args = parser.parse_args()
-    asyncio.run(main_async(args.symbols or crypto, args.purge))
+    asyncio.run(main_async(args.symbols or crypto, args.purge, not args.no_resume))
 
 
 if __name__ == "__main__":
