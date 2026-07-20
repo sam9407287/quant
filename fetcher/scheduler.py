@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
+from fetcher.backup import run_backup
 from fetcher.notifier import notify
 from fetcher.pipeline import (
     flag_anomalies,
@@ -96,6 +97,14 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
     notify(summary, success=all_ok, duration_seconds=abs(duration))
 
     logger.info("Daily fetch complete: %s", summary)
+
+    # Back up right after ingestion: the new bars are the whole reason
+    # the backup exists, and a failure here must not fail the fetch.
+    try:
+        await run_backup()
+    except Exception:
+        logger.exception("Off-site backup failed (data is still in the DB)")
+
     return summary
 
 

@@ -70,6 +70,17 @@ class Settings(BaseSettings):
     # Notifications (optional — leave empty to disable)
     notify_webhook_url: str = ""
 
+    # Off-site backup to Cloudflare R2 (ADR-006). Empty credentials
+    # disable the backup job rather than failing the fetcher.
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket: str = ""
+    # Bars before this date come from the purchased vendor history and
+    # are re-loadable from those CSVs; bars from this date on are
+    # crawler-accumulated and unrecoverable, so they are what we back up.
+    backup_since: str = "2026-07-20"
+
     @field_validator("fetch_instruments", mode="before")
     @classmethod
     def split_instruments(cls, v: str | list[str]) -> list[str]:

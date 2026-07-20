@@ -14,7 +14,7 @@ export type Instrument =
   | "ZC" | "ZS" | "ZW" | "ZL" | "ZM"    // grains
   | "KC" | "SB" | "CC"                   // softs
   | "HE" | "LE"                          // livestock
-  | "BTC" | "ETH";                       // crypto
+  | "BTC" | "ETH" | "SOL" | "ADA";       // crypto
 
 export const INSTRUMENTS: readonly Instrument[] = [
   "NQ", "ES", "YM", "RTY", "NKD",
@@ -25,7 +25,7 @@ export const INSTRUMENTS: readonly Instrument[] = [
   "ZC", "ZS", "ZW", "ZL", "ZM",
   "KC", "SB", "CC",
   "HE", "LE",
-  "BTC", "ETH",
+  "BTC", "ETH", "SOL", "ADA",
 ];
 
 export type AssetClass =
@@ -72,8 +72,10 @@ export const INSTRUMENT_META: Record<Instrument, InstrumentMeta> = {
   CC:  { symbol: "CC",  name: "Cocoa",             assetClass: "soft"         },
   HE:  { symbol: "HE",  name: "Lean Hogs",         assetClass: "livestock"    },
   LE:  { symbol: "LE",  name: "Live Cattle",       assetClass: "livestock"    },
-  BTC: { symbol: "BTC", name: "Bitcoin",           assetClass: "crypto"       },
-  ETH: { symbol: "ETH", name: "Ether",             assetClass: "crypto"       },
+  BTC: { symbol: "BTC", name: "Bitcoin (CME)",     assetClass: "crypto"       },
+  ETH: { symbol: "ETH", name: "Ether (CME)",       assetClass: "crypto"       },
+  SOL: { symbol: "SOL", name: "Solana (spot)",     assetClass: "crypto"       },
+  ADA: { symbol: "ADA", name: "Cardano (spot)",    assetClass: "crypto"       },
 };
 
 export const ASSET_CLASSES: readonly AssetClass[] = [

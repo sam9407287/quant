@@ -238,7 +238,7 @@ FROM
         ('ZC'), ('ZS'), ('ZW'), ('ZL'), ('ZM'),     -- grains
         ('KC'), ('SB'), ('CC'),                      -- softs
         ('HE'), ('LE'),                              -- livestock
-        ('BTC'), ('ETH')                             -- crypto
+        ('BTC'), ('ETH'), ('SOL'), ('ADA')           -- crypto
     ) AS i(instrument),
     (VALUES ('1m'), ('5m'), ('15m'), ('1h'), ('4h'), ('1d'), ('1w')) AS t(timeframe)
 ON CONFLICT DO NOTHING;

@@ -297,10 +297,10 @@ don't do all of them.
   exercise `pnpm typecheck` or `pnpm build`. A frontend regression
   could land on `main` and only fail on Railway. Adding the job is
   ~15 minutes and prevents real outages.
-- **Backups for self-hosted timescaledb.** Currently zero. Cron a
-  `pg_dump` to object storage (or Railway's own backup service if it
-  ships for self-hosted DBs). Without this, ADR-001's "no managed
-  backups" trade-off is the highest production risk in the system.
+- ~~**Backups for self-hosted timescaledb.**~~ ✅ Solved 2026-07-20 by
+  ADR-006: gzipped-CSV backup to Cloudflare R2, chained to the daily
+  fetch (monthly bar partitions + daily small-table snapshots).
+  Awaiting R2 credentials on the fetcher service to activate.
 - **Health endpoint with real DB probe.** `/health` returns 200
   unconditionally; richer `SELECT 1` + last-fetch-freshness check
   becomes the load-bearing signal for "is the pipeline healthy" and

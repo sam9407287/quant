@@ -39,7 +39,7 @@ Symbol = Literal[
     "ZC", "ZS", "ZW", "ZL", "ZM",             # grains
     "KC", "SB", "CC",                          # softs
     "HE", "LE",                                # livestock
-    "BTC", "ETH",                              # crypto
+    "BTC", "ETH", "SOL", "ADA",                # crypto
 ]
 
 AssetClass = Literal[
@@ -93,8 +93,14 @@ INSTRUMENT_REGISTRY: dict[str, InstrumentMeta] = {
     "CC":  InstrumentMeta("CC",  "Cocoa",               "soft",          "ICE",   "CC=F"),
     "HE":  InstrumentMeta("HE",  "Lean Hogs",           "livestock",     "CME",   "HE=F"),
     "LE":  InstrumentMeta("LE",  "Live Cattle",         "livestock",     "CME",   "LE=F"),
-    "BTC": InstrumentMeta("BTC", "Bitcoin",             "crypto",        "CME",   "BTC=F"),
-    "ETH": InstrumentMeta("ETH", "Ether",               "crypto",        "CME",   "ETH=F"),
+    "BTC": InstrumentMeta("BTC", "Bitcoin (CME)",       "crypto",        "CME",   "BTC=F"),
+    "ETH": InstrumentMeta("ETH", "Ether (CME)",         "crypto",        "CME",   "ETH=F"),
+    # SOL/ADA are carried as SPOT pairs, not futures: CME Solana futures
+    # trade too thin for 1m backtesting (~965 bars/5d vs 6252 for spot)
+    # and there is no liquid CME Cardano contract at all. Spot trades
+    # 24/7, so these two have no session gaps and no contract rolls.
+    "SOL": InstrumentMeta("SOL", "Solana (spot)",       "crypto",        "SPOT",  "SOL-USD"),
+    "ADA": InstrumentMeta("ADA", "Cardano (spot)",      "crypto",        "SPOT",  "ADA-USD"),
 }
 
 
