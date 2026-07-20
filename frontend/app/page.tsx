@@ -67,6 +67,9 @@ export default async function DashboardPage() {
                     </span>
                     <span className="text-xs text-zinc-500">{meta.name}</span>
                   </div>
+                  <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+                    {meta.exchange}
+                  </div>
                   <div className="mt-2 text-2xl font-semibold">
                     {r ? r.bar_count.toLocaleString() : "—"}
                   </div>

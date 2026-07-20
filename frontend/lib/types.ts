@@ -14,7 +14,7 @@ export type Instrument =
   | "ZC" | "ZS" | "ZW" | "ZL" | "ZM"    // grains
   | "KC" | "SB" | "CC"                   // softs
   | "HE" | "LE"                          // livestock
-  | "BTC" | "ETH" | "SOL" | "ADA";       // crypto
+  | "BTC" | "ETH" | "SOL" | "ADA" | "BNB" | "DOGE"; // crypto (Binance spot)
 
 export const INSTRUMENTS: readonly Instrument[] = [
   "NQ", "ES", "YM", "RTY", "NKD",
@@ -25,7 +25,7 @@ export const INSTRUMENTS: readonly Instrument[] = [
   "ZC", "ZS", "ZW", "ZL", "ZM",
   "KC", "SB", "CC",
   "HE", "LE",
-  "BTC", "ETH", "SOL", "ADA",
+  "BTC", "ETH", "SOL", "ADA", "BNB", "DOGE",
 ];
 
 export type AssetClass =
@@ -36,46 +36,51 @@ export interface InstrumentMeta {
   symbol: Instrument;
   name: string;
   assetClass: AssetClass;
+  /** Venue the prices come from — surfaced in the UI so a chart is
+   *  never ambiguous about which market it is showing. */
+  exchange: string;
 }
 
 export const INSTRUMENT_META: Record<Instrument, InstrumentMeta> = {
-  NQ:  { symbol: "NQ",  name: "Nasdaq-100",       assetClass: "equity_index" },
-  ES:  { symbol: "ES",  name: "S&P 500",          assetClass: "equity_index" },
-  YM:  { symbol: "YM",  name: "Dow Jones",        assetClass: "equity_index" },
-  RTY: { symbol: "RTY", name: "Russell 2000",     assetClass: "equity_index" },
-  NKD: { symbol: "NKD", name: "Nikkei 225 (USD)", assetClass: "intl_index"   },
-  ZT:  { symbol: "ZT",  name: "2-Year T-Note",    assetClass: "rates"        },
-  ZF:  { symbol: "ZF",  name: "5-Year T-Note",    assetClass: "rates"        },
-  ZN:  { symbol: "ZN",  name: "10-Year T-Note",   assetClass: "rates"        },
-  ZB:  { symbol: "ZB",  name: "30-Year T-Bond",   assetClass: "rates"        },
-  "6E": { symbol: "6E", name: "Euro FX",           assetClass: "fx"           },
-  "6J": { symbol: "6J", name: "Japanese Yen",      assetClass: "fx"           },
-  "6B": { symbol: "6B", name: "British Pound",     assetClass: "fx"           },
-  "6A": { symbol: "6A", name: "Australian Dollar", assetClass: "fx"           },
-  GC:  { symbol: "GC",  name: "Gold",              assetClass: "metal"        },
-  SI:  { symbol: "SI",  name: "Silver",            assetClass: "metal"        },
-  HG:  { symbol: "HG",  name: "Copper",            assetClass: "metal"        },
-  PL:  { symbol: "PL",  name: "Platinum",          assetClass: "metal"        },
-  PA:  { symbol: "PA",  name: "Palladium",         assetClass: "metal"        },
-  CL:  { symbol: "CL",  name: "Crude Oil (WTI)",   assetClass: "energy"       },
-  NG:  { symbol: "NG",  name: "Natural Gas",       assetClass: "energy"       },
-  HO:  { symbol: "HO",  name: "Heating Oil",       assetClass: "energy"       },
-  RB:  { symbol: "RB",  name: "RBOB Gasoline",     assetClass: "energy"       },
-  BZ:  { symbol: "BZ",  name: "Brent Crude",       assetClass: "energy"       },
-  ZC:  { symbol: "ZC",  name: "Corn",              assetClass: "grain"        },
-  ZS:  { symbol: "ZS",  name: "Soybeans",          assetClass: "grain"        },
-  ZW:  { symbol: "ZW",  name: "Wheat",             assetClass: "grain"        },
-  ZL:  { symbol: "ZL",  name: "Soybean Oil",       assetClass: "grain"        },
-  ZM:  { symbol: "ZM",  name: "Soybean Meal",      assetClass: "grain"        },
-  KC:  { symbol: "KC",  name: "Coffee",            assetClass: "soft"         },
-  SB:  { symbol: "SB",  name: "Sugar No. 11",      assetClass: "soft"         },
-  CC:  { symbol: "CC",  name: "Cocoa",             assetClass: "soft"         },
-  HE:  { symbol: "HE",  name: "Lean Hogs",         assetClass: "livestock"    },
-  LE:  { symbol: "LE",  name: "Live Cattle",       assetClass: "livestock"    },
-  BTC: { symbol: "BTC", name: "Bitcoin (CME)",     assetClass: "crypto"       },
-  ETH: { symbol: "ETH", name: "Ether (CME)",       assetClass: "crypto"       },
-  SOL: { symbol: "SOL", name: "Solana (spot)",     assetClass: "crypto"       },
-  ADA: { symbol: "ADA", name: "Cardano (spot)",    assetClass: "crypto"       },
+  NQ:  { symbol: "NQ",  name: "Nasdaq-100",       assetClass: "equity_index", exchange: "CME" },
+  ES:  { symbol: "ES",  name: "S&P 500",          assetClass: "equity_index", exchange: "CME" },
+  YM:  { symbol: "YM",  name: "Dow Jones",        assetClass: "equity_index", exchange: "CBOT" },
+  RTY: { symbol: "RTY", name: "Russell 2000",     assetClass: "equity_index" , exchange: "CME" },
+  NKD: { symbol: "NKD", name: "Nikkei 225 (USD)", assetClass: "intl_index"   , exchange: "CME" },
+  ZT:  { symbol: "ZT",  name: "2-Year T-Note",    assetClass: "rates", exchange: "CBOT" },
+  ZF:  { symbol: "ZF",  name: "5-Year T-Note",    assetClass: "rates", exchange: "CBOT" },
+  ZN:  { symbol: "ZN",  name: "10-Year T-Note",   assetClass: "rates", exchange: "CBOT" },
+  ZB:  { symbol: "ZB",  name: "30-Year T-Bond",   assetClass: "rates", exchange: "CBOT" },
+  "6E": { symbol: "6E", name: "Euro FX",           assetClass: "fx"           , exchange: "CME" },
+  "6J": { symbol: "6J", name: "Japanese Yen",      assetClass: "fx"           , exchange: "CME" },
+  "6B": { symbol: "6B", name: "British Pound",     assetClass: "fx"           , exchange: "CME" },
+  "6A": { symbol: "6A", name: "Australian Dollar", assetClass: "fx"           , exchange: "CME" },
+  GC:  { symbol: "GC",  name: "Gold",              assetClass: "metal", exchange: "COMEX" },
+  SI:  { symbol: "SI",  name: "Silver",            assetClass: "metal", exchange: "COMEX" },
+  HG:  { symbol: "HG",  name: "Copper",            assetClass: "metal", exchange: "COMEX" },
+  PL:  { symbol: "PL",  name: "Platinum",          assetClass: "metal", exchange: "NYMEX" },
+  PA:  { symbol: "PA",  name: "Palladium",         assetClass: "metal", exchange: "NYMEX" },
+  CL:  { symbol: "CL",  name: "Crude Oil (WTI)",   assetClass: "energy", exchange: "NYMEX" },
+  NG:  { symbol: "NG",  name: "Natural Gas",       assetClass: "energy", exchange: "NYMEX" },
+  HO:  { symbol: "HO",  name: "Heating Oil",       assetClass: "energy", exchange: "NYMEX" },
+  RB:  { symbol: "RB",  name: "RBOB Gasoline",     assetClass: "energy", exchange: "NYMEX" },
+  BZ:  { symbol: "BZ",  name: "Brent Crude",       assetClass: "energy", exchange: "NYMEX" },
+  ZC:  { symbol: "ZC",  name: "Corn",              assetClass: "grain", exchange: "CBOT" },
+  ZS:  { symbol: "ZS",  name: "Soybeans",          assetClass: "grain", exchange: "CBOT" },
+  ZW:  { symbol: "ZW",  name: "Wheat",             assetClass: "grain", exchange: "CBOT" },
+  ZL:  { symbol: "ZL",  name: "Soybean Oil",       assetClass: "grain", exchange: "CBOT" },
+  ZM:  { symbol: "ZM",  name: "Soybean Meal",      assetClass: "grain", exchange: "CBOT" },
+  KC:  { symbol: "KC",  name: "Coffee",            assetClass: "soft", exchange: "ICE" },
+  SB:  { symbol: "SB",  name: "Sugar No. 11",      assetClass: "soft", exchange: "ICE" },
+  CC:  { symbol: "CC",  name: "Cocoa",             assetClass: "soft", exchange: "ICE" },
+  HE:  { symbol: "HE",  name: "Lean Hogs",         assetClass: "livestock", exchange: "CME" },
+  LE:  { symbol: "LE",  name: "Live Cattle",       assetClass: "livestock", exchange: "CME" },
+  BTC:  { symbol: "BTC",  name: "Bitcoin",   assetClass: "crypto", exchange: "Binance" },
+  ETH:  { symbol: "ETH",  name: "Ether",     assetClass: "crypto", exchange: "Binance" },
+  SOL:  { symbol: "SOL",  name: "Solana",    assetClass: "crypto", exchange: "Binance" },
+  ADA:  { symbol: "ADA",  name: "Cardano",   assetClass: "crypto", exchange: "Binance" },
+  BNB:  { symbol: "BNB",  name: "BNB",       assetClass: "crypto", exchange: "Binance" },
+  DOGE: { symbol: "DOGE", name: "Dogecoin",  assetClass: "crypto", exchange: "Binance" },
 };
 
 export const ASSET_CLASSES: readonly AssetClass[] = [

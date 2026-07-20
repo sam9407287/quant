@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -15,8 +15,9 @@ class TestRunDailyFetch:
     @pytest.mark.asyncio
     async def test_calls_fetch_for_each_instrument(self) -> None:
         """run_daily_fetch should call the data source once per instrument."""
+        mock_source = MagicMock()
         with (
-            patch("fetcher.scheduler._source") as mock_source,
+            patch.dict("fetcher.scheduler._sources", {"yfinance": mock_source, "binance": mock_source}),
             patch("fetcher.scheduler.AsyncSessionLocal") as mock_session_cls,
             patch("fetcher.scheduler.validate") as mock_validate,
             patch("fetcher.scheduler.flag_anomalies") as mock_flag,
@@ -49,8 +50,9 @@ class TestRunDailyFetch:
     @pytest.mark.asyncio
     async def test_handles_source_exception_gracefully(self) -> None:
         """A failed fetch for one instrument should not crash the whole job."""
+        mock_source = MagicMock()
         with (
-            patch("fetcher.scheduler._source") as mock_source,
+            patch.dict("fetcher.scheduler._sources", {"yfinance": mock_source, "binance": mock_source}),
             patch("fetcher.scheduler.AsyncSessionLocal") as mock_session_cls,
             patch("fetcher.scheduler.refresh_continuous_aggregates", new_callable=AsyncMock),
             patch("fetcher.scheduler.update_all_coverage", new_callable=AsyncMock),
@@ -68,8 +70,9 @@ class TestRunDailyFetch:
 
     @pytest.mark.asyncio
     async def test_summary_contains_correct_counts(self) -> None:
+        mock_source = MagicMock()
         with (
-            patch("fetcher.scheduler._source") as mock_source,
+            patch.dict("fetcher.scheduler._sources", {"yfinance": mock_source, "binance": mock_source}),
             patch("fetcher.scheduler.AsyncSessionLocal") as mock_session_cls,
             patch("fetcher.scheduler.validate") as mock_validate,
             patch("fetcher.scheduler.flag_anomalies") as mock_flag,

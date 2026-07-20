@@ -20,7 +20,7 @@ jobs:
           cache: pip
 
       - name: Install dev dependencies
-        run: pip install ruff mypy pydantic pydantic-settings fastapi sqlalchemy asyncpg
+        run: pip install ruff mypy pydantic pydantic-settings fastapi sqlalchemy asyncpg types-requests
 
       - name: Lint with ruff
         run: ruff check .

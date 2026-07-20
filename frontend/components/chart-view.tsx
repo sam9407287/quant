@@ -378,8 +378,16 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             </option>
           ))}
         </select>
-        <div className="ml-auto text-xs text-zinc-500">
-          {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
+        <div className="ml-auto flex items-center gap-3 text-xs text-zinc-500">
+          <span>
+            {INSTRUMENT_META[instrument].name} ·{" "}
+            <span className="text-zinc-400">
+              {INSTRUMENT_META[instrument].exchange}
+            </span>
+          </span>
+          <span>
+            {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
+          </span>
         </div>
         </div>
       </div>

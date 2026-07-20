@@ -39,7 +39,7 @@ Symbol = Literal[
     "ZC", "ZS", "ZW", "ZL", "ZM",             # grains
     "KC", "SB", "CC",                          # softs
     "HE", "LE",                                # livestock
-    "BTC", "ETH", "SOL", "ADA",                # crypto
+    "BTC", "ETH", "SOL", "ADA", "BNB", "DOGE", # crypto (Binance spot)
 ]
 
 AssetClass = Literal[
@@ -54,7 +54,14 @@ class InstrumentMeta:
     name: str
     asset_class: AssetClass
     exchange: str
-    yfinance_ticker: str
+    # Exactly one of these is set: futures come from Yahoo, crypto from
+    # Binance. `data_source` names the provider shown in the UI.
+    yfinance_ticker: str = ""
+    binance_pair: str = ""
+
+    @property
+    def data_source(self) -> str:
+        return "binance" if self.binance_pair else "yfinance"
 
 
 INSTRUMENT_REGISTRY: dict[str, InstrumentMeta] = {
@@ -93,14 +100,16 @@ INSTRUMENT_REGISTRY: dict[str, InstrumentMeta] = {
     "CC":  InstrumentMeta("CC",  "Cocoa",               "soft",          "ICE",   "CC=F"),
     "HE":  InstrumentMeta("HE",  "Lean Hogs",           "livestock",     "CME",   "HE=F"),
     "LE":  InstrumentMeta("LE",  "Live Cattle",         "livestock",     "CME",   "LE=F"),
-    "BTC": InstrumentMeta("BTC", "Bitcoin (CME)",       "crypto",        "CME",   "BTC=F"),
-    "ETH": InstrumentMeta("ETH", "Ether (CME)",         "crypto",        "CME",   "ETH=F"),
-    # SOL/ADA are carried as SPOT pairs, not futures: CME Solana futures
-    # trade too thin for 1m backtesting (~965 bars/5d vs 6252 for spot)
-    # and there is no liquid CME Cardano contract at all. Spot trades
-    # 24/7, so these two have no session gaps and no contract rolls.
-    "SOL": InstrumentMeta("SOL", "Solana (spot)",       "crypto",        "SPOT",  "SOL-USD"),
-    "ADA": InstrumentMeta("ADA", "Cardano (spot)",      "crypto",        "SPOT",  "ADA-USD"),
+    # Crypto is Binance spot across the board (ADR-007): the full 1m
+    # history is free back to each listing date and using one venue for
+    # both history and daily updates avoids a price seam at the join.
+    # These trade 24/7 — no session gaps, no contract rolls.
+    "BTC":  InstrumentMeta("BTC",  "Bitcoin",   "crypto", "Binance", binance_pair="BTCUSDT"),
+    "ETH":  InstrumentMeta("ETH",  "Ether",     "crypto", "Binance", binance_pair="ETHUSDT"),
+    "SOL":  InstrumentMeta("SOL",  "Solana",    "crypto", "Binance", binance_pair="SOLUSDT"),
+    "ADA":  InstrumentMeta("ADA",  "Cardano",   "crypto", "Binance", binance_pair="ADAUSDT"),
+    "BNB":  InstrumentMeta("BNB",  "BNB",       "crypto", "Binance", binance_pair="BNBUSDT"),
+    "DOGE": InstrumentMeta("DOGE", "Dogecoin",  "crypto", "Binance", binance_pair="DOGEUSDT"),
 }
 
 
@@ -110,4 +119,16 @@ ALL_SYMBOLS: tuple[str, ...] = tuple(INSTRUMENT_REGISTRY.keys())
 def get_yfinance_ticker(symbol: str) -> str | None:
     """Look up the yfinance continuous-contract ticker for a symbol."""
     meta = INSTRUMENT_REGISTRY.get(symbol.upper())
-    return meta.yfinance_ticker if meta else None
+    return meta.yfinance_ticker if meta and meta.yfinance_ticker else None
+
+
+def get_binance_pair(symbol: str) -> str | None:
+    """Look up the Binance spot pair for a symbol (crypto only)."""
+    meta = INSTRUMENT_REGISTRY.get(symbol.upper())
+    return meta.binance_pair if meta and meta.binance_pair else None
+
+
+def get_data_source(symbol: str) -> str:
+    """Provider name for a symbol — 'binance' or 'yfinance'."""
+    meta = INSTRUMENT_REGISTRY.get(symbol.upper())
+    return meta.data_source if meta else "yfinance"

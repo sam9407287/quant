@@ -37,7 +37,8 @@ class GoogleClaims:
 def verify_google_token(token: str, client_id: str) -> GoogleClaims:
     """Verify signature/audience/expiry and return the identity claims."""
     try:
-        info = id_token.verify_oauth2_token(token, _transport, client_id)
+        # google-auth ships no type information for this helper.
+        info = id_token.verify_oauth2_token(token, _transport, client_id)  # type: ignore[no-untyped-call]
     except Exception as exc:  # google-auth raises bare ValueError et al.
         raise AuthError(f"invalid Google ID token: {exc}") from exc
     if info.get("iss") not in _GOOGLE_ISSUERS:

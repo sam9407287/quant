@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
+from app.core.instruments import get_data_source
 from app.db.session import AsyncSessionLocal
 from fetcher.backup import run_backup
 from fetcher.notifier import notify
@@ -25,11 +26,13 @@ from fetcher.pipeline import (
     upsert_bars,
     validate,
 )
+from fetcher.sources.binance_source import BinanceSource
 from fetcher.sources.yfinance_source import YFinanceSource
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
-_source = YFinanceSource()
+# One adapter per provider; the registry decides which an instrument uses.
+_sources = {"yfinance": YFinanceSource(), "binance": BinanceSource()}
 
 
 async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dict]:
@@ -62,12 +65,13 @@ async def run_daily_fetch(instruments: list[str] | None = None) -> dict[str, dic
     async with AsyncSessionLocal() as session:
         for instrument in targets:
             logger.info("Starting daily fetch for %s (%s → %s)", instrument, start, end)
+            source = _sources[get_data_source(instrument)]
             try:
-                df = _source.fetch(instrument, start, end, timeframe="1m")
+                df = source.fetch(instrument, start, end, timeframe="1m")
                 df = validate(df)
                 df = flag_anomalies(df, instrument)
                 inserted, skipped = await upsert_bars(
-                    session, df, instrument, source=_source.source_name
+                    session, df, instrument, source=source.source_name
                 )
                 await update_all_coverage(session, instrument, fetch_ok=True)
                 summary[instrument] = {
