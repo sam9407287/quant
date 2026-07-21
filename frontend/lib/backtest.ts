@@ -1,7 +1,7 @@
 // Typed client for /api/v1/backtest — hand-maintained mirror of
 // app/backtest/{params,schemas}.py, same convention as lib/ml.ts.
 
-import { authHeaders } from "@/lib/http";
+import { apiError, authHeaders } from "@/lib/http";
 
 export interface SessionClock {
   tz: string;
@@ -111,10 +111,7 @@ async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), {
     headers: { Accept: "application/json", ...authHeaders() },
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`GET ${path} → ${res.status}\n${body}`);
-  }
+  if (!res.ok) throw await apiError(`GET ${path}`, res);
   return (await res.json()) as T;
 }
 
@@ -131,10 +128,7 @@ export async function runBacktest(
     },
     body: JSON.stringify({ params, notes: notes || null }),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`POST /backtest/runs → ${res.status}\n${body}`);
-  }
+  if (!res.ok) throw await apiError("POST /backtest/runs", res);
   return (await res.json()) as RunResponse;
 }
 

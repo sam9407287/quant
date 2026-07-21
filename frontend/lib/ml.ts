@@ -1,4 +1,4 @@
-import { authHeaders } from "@/lib/http";
+import { apiError, authHeaders } from "@/lib/http";
 
 /**
  * ML workbench types and API helpers.
@@ -172,10 +172,7 @@ export async function trainModel(cfg: TrainConfig): Promise<TrainResponse> {
     },
     body: JSON.stringify(cfg),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`POST /ml/train → ${res.status}\n${body}`);
-  }
+  if (!res.ok) throw await apiError("POST /ml/train", res);
   return (await res.json()) as TrainResponse;
 }
 
@@ -186,7 +183,7 @@ export async function listExperiments(limit = 50): Promise<ExperimentRecord[]> {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`GET /ml/experiments → ${res.status}`);
+  if (!res.ok) throw await apiError("GET /ml/experiments", res);
   return (await res.json()) as ExperimentRecord[];
 }
 
@@ -195,6 +192,6 @@ export async function getExperiment(id: string): Promise<ExperimentRecord> {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`GET /ml/experiments/${id} → ${res.status}`);
+  if (!res.ok) throw await apiError(`GET /ml/experiments/${id}`, res);
   return (await res.json()) as ExperimentRecord;
 }

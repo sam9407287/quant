@@ -1,7 +1,7 @@
 // Typed client for /api/v1/strategies — hand-maintained mirror of
 // app/strategies/schemas.py + app/api/strategies.py.
 
-import { authHeaders } from "@/lib/http";
+import { apiError, authHeaders } from "@/lib/http";
 import type { Timeframe } from "@/lib/types";
 
 export type OperandKind =
@@ -103,10 +103,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}\n${body}`);
-  }
+  if (!res.ok) throw await apiError(`${init?.method ?? "GET"} ${path}`, res);
   return (await res.json()) as T;
 }
 

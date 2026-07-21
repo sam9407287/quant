@@ -25,6 +25,23 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Turn a failed Response into an Error, handling auth expiry cleanly.
+ *
+ * A 401 almost always means the ~1h Google ID token expired mid-session.
+ * Rather than surface the raw "Token expired" JSON, clear the stale
+ * token (which flips the UI back to signed-out and re-shows the sign-in
+ * button) and throw a friendly, actionable message. Every API client
+ * routes its non-OK responses through here so the behaviour is uniform.
+ */
+export async function apiError(path: string, res: Response): Promise<Error> {
+  if (res.status === 401) {
+    clearIdToken();
+    return new Error("登入已過期，請重新以 Google 登入後再試一次。");
+  }
+  const body = await res.text().catch(() => "");
+  return new Error(`${path} → ${res.status}\n${body}`);
+}
+
 export interface TokenClaims {
   email: string;
   name?: string;

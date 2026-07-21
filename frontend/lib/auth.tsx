@@ -50,11 +50,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    setUser(currentUser());
     setReady(true);
-    const onChange = () => setUser(currentUser());
-    window.addEventListener("gq-auth-changed", onChange);
-    return () => window.removeEventListener("gq-auth-changed", onChange);
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Proactively drop the token the moment it expires, so the UI flips
+    // to signed-out (sign-in button returns, strategy dropdown disables)
+    // BEFORE the user hits a 401 mid-action.
+    const sync = () => {
+      if (expiryTimer) clearTimeout(expiryTimer);
+      const u = currentUser();
+      setUser(u);
+      if (u) {
+        const msLeft = u.exp * 1000 - Date.now();
+        expiryTimer = setTimeout(() => clearIdToken(), Math.max(0, msLeft));
+      }
+    };
+
+    sync();
+    window.addEventListener("gq-auth-changed", sync);
+    return () => {
+      window.removeEventListener("gq-auth-changed", sync);
+      if (expiryTimer) clearTimeout(expiryTimer);
+    };
   }, []);
 
   const signOut = useCallback(() => {
