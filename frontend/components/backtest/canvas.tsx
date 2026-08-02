@@ -5,8 +5,11 @@
 // engine and API never know which surface produced the params.
 //
 // Param state lives in a React context, NOT in React Flow node data:
-// nodes stay static (id/position only), so dragging never fights the
-// field edits and the compile step is a plain context read.
+// node data stays empty (id/type/position only), so dragging never
+// fights the field edits and the compile step is a plain context read.
+// Nodes themselves are controlled state so modules can be added,
+// duplicated and deleted from the toolbar — every node type edits the
+// same shared params, so duplicates are just extra editing handles.
 
 import {
   Background,
@@ -14,12 +17,14 @@ import {
   Handle,
   Position,
   ReactFlow,
+  useEdgesState,
+  useNodesState,
   type Edge,
   type Node,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 import { EquityChart } from "@/components/backtest/charts";
 import type {
@@ -265,6 +270,17 @@ const INITIAL_EDGES: Edge[] = [
   { id: "r-run", source: "risk", target: "run", animated: true },
 ];
 
+// Palette: which module types the user can add to the canvas, and a
+// label for the toolbar. Every node type maps into the same shared
+// params context, so duplicates are just extra editing handles.
+const PALETTE: { type: string; label: string }[] = [
+  { type: "universe", label: "Universe" },
+  { type: "clock", label: "Session clock" },
+  { type: "entry", label: "Entry" },
+  { type: "risk", label: "Risk bracket" },
+  { type: "run", label: "Run" },
+];
+
 // ── Canvas page component ─────────────────────────────────────────
 
 export function BacktestCanvas() {
@@ -298,12 +314,96 @@ export function BacktestCanvas() {
     [params, busy, error, result],
   );
 
+  // Controlled node/edge state so modules can be added, duplicated and
+  // deleted (the uncontrolled defaultNodes could not change after mount).
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL_NODES);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(INITIAL_EDGES);
+  const [seq, setSeq] = useState(1);
+
+  const addNode = useCallback(
+    (type: string) => {
+      const id = `${type}-${seq}`;
+      setSeq((n) => n + 1);
+      // Drop new nodes on a light diagonal cascade so they never land
+      // exactly on top of an existing one.
+      setNodes((ns) => [
+        ...ns,
+        {
+          id,
+          type,
+          position: { x: 120 + (ns.length % 4) * 40, y: 120 + (ns.length % 6) * 40 },
+          data: {},
+        },
+      ]);
+    },
+    [seq, setNodes],
+  );
+
+  const duplicateSelected = useCallback(() => {
+    setNodes((ns) => {
+      const selected = ns.filter((n) => n.selected);
+      if (!selected.length) return ns;
+      let s = seq;
+      const copies = selected.map((n) => ({
+        ...n,
+        id: `${n.type}-${s++}`,
+        position: { x: n.position.x + 40, y: n.position.y + 40 },
+        selected: false,
+      }));
+      setSeq(s);
+      return [...ns.map((n) => ({ ...n, selected: false })), ...copies];
+    });
+  }, [seq, setNodes]);
+
+  const deleteSelected = useCallback(() => {
+    setNodes((ns) => ns.filter((n) => !n.selected));
+    setEdges((es) => es.filter((e) => !e.selected));
+  }, [setNodes, setEdges]);
+
+  const resetLayout = useCallback(() => {
+    setNodes(INITIAL_NODES);
+    setEdges(INITIAL_EDGES);
+    setSeq(1);
+  }, [setNodes, setEdges]);
+
+  const TOOLBTN =
+    "rounded-md bg-bg-hover px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-zinc-300 transition hover:text-white";
+
   return (
     <Ctx.Provider value={state}>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-panel p-2">
+        <span className="px-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+          Add module
+        </span>
+        {PALETTE.map((p) => (
+          <button key={p.type} type="button" onClick={() => addNode(p.type)} className={TOOLBTN}>
+            + {p.label}
+          </button>
+        ))}
+        <div className="mx-1 h-4 w-px bg-border" />
+        <button type="button" onClick={duplicateSelected} className={TOOLBTN}>
+          Duplicate
+        </button>
+        <button
+          type="button"
+          onClick={deleteSelected}
+          className={`${TOOLBTN} hover:bg-accent-red/20 hover:text-accent-red`}
+        >
+          Delete
+        </button>
+        <button type="button" onClick={resetLayout} className={TOOLBTN}>
+          Reset
+        </button>
+        <span className="ml-auto px-1 text-[10px] text-zinc-600">
+          click a node to select · Duplicate/Delete act on the selection
+        </span>
+      </div>
       <div className="h-[640px] rounded-lg border border-border bg-bg">
         <ReactFlow
-          defaultNodes={INITIAL_NODES}
-          defaultEdges={INITIAL_EDGES}
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           nodeTypes={NODE_TYPES}
           fitView
           proOptions={{ hideAttribution: true }}

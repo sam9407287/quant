@@ -59,7 +59,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 |-------|--------|------|
 | Period 1 | ✅ Deployed | Data collection: TimescaleDB + daily auto-fetch |
 | Period 1.5 | 🚧 Backend live | No-code ML workbench (ADR-002); front-end pending |
-| Period 2 | ✅ Rule-based track live | Killzone-OCO backtest engine + analysis + API + frontend (form and node canvas) shipped 2026-07-19, see `docs/ADR-003-backtest-engine.md`. ML-signal track still planned (STATUS.md §8) |
+| Period 2 | ✅ Rule-based track live | Killzone-OCO backtest engine, rule-based strategy builder, **signal testing** (ADR-008), node canvas (add/duplicate/delete modules). ML-signal track still planned (STATUS.md §8) |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
 | Frontend | ✅ Deployed | Next.js 14 + lightweight-charts dashboard in `frontend/` |
 

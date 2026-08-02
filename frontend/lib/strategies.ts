@@ -86,6 +86,22 @@ export interface EvaluateResponse {
   equity_curve: { date: string; equity_points: number }[];
 }
 
+export interface SignalTestResponse {
+  strategy_id: string;
+  timeframe: Timeframe;
+  bar_count: number;
+  signal_count: number;
+  horizon: number;
+  win_rate: number;
+  mean_return_pct: number;
+  median_return_pct: number;
+  std_return_pct: number;
+  best_return_pct: number;
+  worst_return_pct: number;
+  avg_path_pct: number[];
+  distribution: { center: number; count: number }[];
+}
+
 const DEFAULT_API_URL = "https://quant-production-d645.up.railway.app";
 
 function apiUrl(path: string): string {
@@ -135,6 +151,22 @@ export function evaluateStrategy(
   body: { instrument: string; start: string; end: string; adjustment?: string },
 ): Promise<EvaluateResponse> {
   return request(`/api/v1/strategies/${id}/evaluate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function signalTestStrategy(
+  id: string,
+  body: {
+    instrument: string;
+    start: string;
+    end: string;
+    horizon: number;
+    adjustment?: string;
+  },
+): Promise<SignalTestResponse> {
+  return request(`/api/v1/strategies/${id}/signal-test`, {
     method: "POST",
     body: JSON.stringify(body),
   });

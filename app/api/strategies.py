@@ -31,6 +31,7 @@ from app.strategies.repository import (
     update_strategy,
 )
 from app.strategies.schemas import StrategyDefinition
+from app.strategies.signal_test import signal_test
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,29 @@ class EvaluateResponse(BaseModel):
     trades: list[TradeModel]
     metrics: MetricsPoints
     equity_curve: list[EquityPointModel]
+
+
+class SignalTestRequest(EvaluateRequest):
+    horizon: int = Field(default=21, ge=1, le=250)
+
+
+class SignalTestResponse(BaseModel):
+    """Forward-return profile of a strategy's entry signals — see
+    app/strategies/signal_test.py for the methodology (CMT curriculum)."""
+
+    strategy_id: str
+    timeframe: str
+    bar_count: int
+    signal_count: int
+    horizon: int
+    win_rate: float
+    mean_return_pct: float
+    median_return_pct: float
+    std_return_pct: float
+    best_return_pct: float
+    worst_return_pct: float
+    avg_path_pct: list[float]
+    distribution: list[dict[str, float]]  # {center, count}
 
 
 def _as_day_results(trades: list[Trade]) -> list[DayResult]:
@@ -242,4 +266,48 @@ async def evaluate_strategy(
             EquityPointModel(date=d, equity_points=v)
             for d, v in equity_curve(_as_day_results(trades))
         ],
+    )
+
+
+@router.post(
+    "/{strategy_id}/signal-test",
+    response_model=SignalTestResponse,
+    summary="Signal-test a strategy's entries in isolation (forward-return profile)",
+)
+async def signal_test_strategy(
+    strategy_id: str,
+    body: SignalTestRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> SignalTestResponse:
+    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
+    if row is None:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    defn = StrategyDefinition.model_validate(row["definition"])
+
+    df = await load_bars_df(
+        db, body.instrument, defn.timeframe, body.start, body.end, body.adjustment
+    )
+    if df.empty:
+        raise HTTPException(status_code=400, detail="no bars for this instrument/range")
+
+    res = signal_test(df, defn, horizon=body.horizon)
+    logger.info(
+        "strategies.signal_test: id=%s instrument=%s tf=%s bars=%d signals=%d",
+        strategy_id, body.instrument, defn.timeframe, len(df), res.signal_count,
+    )
+    return SignalTestResponse(
+        strategy_id=strategy_id,
+        timeframe=defn.timeframe,
+        bar_count=len(df),
+        signal_count=res.signal_count,
+        horizon=res.horizon,
+        win_rate=res.win_rate,
+        mean_return_pct=res.mean_return_pct,
+        median_return_pct=res.median_return_pct,
+        std_return_pct=res.std_return_pct,
+        best_return_pct=res.best_return_pct,
+        worst_return_pct=res.worst_return_pct,
+        avg_path_pct=res.avg_path_pct,
+        distribution=[{"center": c, "count": float(n)} for c, n in res.distribution],
     )
