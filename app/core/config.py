@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+    # "production" hides the interactive docs / OpenAPI schema and is the
+    # signal for any prod-only hardening. Set ENVIRONMENT=production on
+    # the Railway api service.
+    environment: str = "development"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
 
     # Security
     api_secret_key: str = "changeme"
