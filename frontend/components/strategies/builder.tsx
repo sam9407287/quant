@@ -34,6 +34,7 @@ const PILL_BTN =
 interface OperandState {
   kind: OperandKind;
   window: number;
+  window2: number;
   value: number;
 }
 
@@ -50,7 +51,7 @@ interface BracketState {
   value: number;
 }
 
-const DEFAULT_OPERAND: OperandState = { kind: "price", window: 14, value: 0 };
+const DEFAULT_OPERAND: OperandState = { kind: "price", window: 14, window2: 26, value: 0 };
 
 function emptyCondition(): ConditionState {
   return {
@@ -64,6 +65,10 @@ function emptyCondition(): ConditionState {
 function toOperand(s: OperandState): Operand {
   if (s.kind === "price") return { kind: "price" };
   if (s.kind === "const") return { kind: "const", value: s.value };
+  if (s.kind === "macd" || s.kind === "macd_signal")
+    return { kind: s.kind, window: s.window, window2: s.window2 };
+  if (s.kind === "bollinger_upper" || s.kind === "bollinger_lower")
+    return { kind: s.kind, window: s.window, value: s.value };
   return { kind: s.kind, window: s.window };
 }
 
@@ -72,6 +77,7 @@ function fromOperand(o: Operand | undefined): OperandState {
   return {
     kind: o.kind,
     window: o.window ?? 14,
+    window2: o.window2 ?? 26,
     value: o.value ?? 0,
   };
 }
@@ -100,8 +106,17 @@ const OPERAND_KINDS: { kind: OperandKind; label: string }[] = [
   { kind: "rsi", label: "RSI" },
   { kind: "highest_high", label: "Highest high (prior N)" },
   { kind: "lowest_low", label: "Lowest low (prior N)" },
+  { kind: "macd", label: "MACD line" },
+  { kind: "macd_signal", label: "MACD signal" },
+  { kind: "atr", label: "ATR" },
+  { kind: "roc", label: "Rate of change %" },
+  { kind: "bollinger_upper", label: "Bollinger upper" },
+  { kind: "bollinger_lower", label: "Bollinger lower" },
   { kind: "const", label: "Constant" },
 ];
+
+const MACD_KINDS = new Set(["macd", "macd_signal"]);
+const BOLL_KINDS = new Set(["bollinger_upper", "bollinger_lower"]);
 
 function OperandEditor({
   state,
@@ -138,9 +153,31 @@ function OperandEditor({
           min={1}
           max={500}
           className={INPUT_CLASS}
-          title="window"
+          title={MACD_KINDS.has(state.kind) ? "fast period" : "window"}
           value={state.window}
           onChange={(e) => onChange({ ...state, window: Number(e.target.value) })}
+        />
+      )}
+      {MACD_KINDS.has(state.kind) && (
+        <input
+          type="number"
+          min={1}
+          max={500}
+          className={INPUT_CLASS}
+          title="slow period"
+          value={state.window2}
+          onChange={(e) => onChange({ ...state, window2: Number(e.target.value) })}
+        />
+      )}
+      {BOLL_KINDS.has(state.kind) && (
+        <input
+          type="number"
+          min={0.1}
+          step={0.1}
+          className={INPUT_CLASS}
+          title="std multiple"
+          value={state.value}
+          onChange={(e) => onChange({ ...state, value: Number(e.target.value) })}
         />
       )}
     </div>
@@ -247,6 +284,7 @@ export function StrategyManager() {
   const [entryShort, setEntryShort] = useState<ConditionState>(emptyCondition());
   const [exitLong, setExitLong] = useState<ConditionState>(emptyCondition());
   const [exitShort, setExitShort] = useState<ConditionState>(emptyCondition());
+  const [filters, setFilters] = useState<ConditionState[]>([]);
   const [sl, setSl] = useState<BracketState>({ enabled: false, mode: "points", value: 100 });
   const [tp, setTp] = useState<BracketState>({ enabled: false, mode: "points", value: 200 });
 
@@ -278,6 +316,7 @@ export function StrategyManager() {
     setEntryShort(emptyCondition());
     setExitLong(emptyCondition());
     setExitShort(emptyCondition());
+    setFilters([]);
     setSl({ enabled: false, mode: "points", value: 100 });
     setTp({ enabled: false, mode: "points", value: 200 });
   }
@@ -292,6 +331,7 @@ export function StrategyManager() {
     setEntryShort(fromCondition(s.definition.entry_short));
     setExitLong(fromCondition(s.definition.exit_long));
     setExitShort(fromCondition(s.definition.exit_short));
+    setFilters((s.definition.filters ?? []).map((c) => fromCondition(c)));
     setSl(
       s.definition.sl
         ? { enabled: true, ...s.definition.sl }
@@ -317,6 +357,10 @@ export function StrategyManager() {
       entry_short: toCondition(entryShort),
       exit_long: toCondition(exitLong),
       exit_short: toCondition(exitShort),
+      filters: filters
+        .map((f) => ({ ...f, enabled: true }))
+        .map(toCondition)
+        .filter((c): c is Condition => c !== null),
       sl: sl.enabled ? { mode: sl.mode, value: sl.value } : null,
       tp: tp.enabled ? { mode: tp.mode, value: tp.value } : null,
     };
@@ -442,6 +486,70 @@ export function StrategyManager() {
             <ConditionEditor title="Entry SHORT when…" state={entryShort} onChange={setEntryShort} />
             <ConditionEditor title="Exit LONG when…" state={exitLong} onChange={setExitLong} />
             <ConditionEditor title="Exit SHORT when…" state={exitShort} onChange={setExitShort} />
+          </div>
+
+          <div className="rounded-md border border-border bg-bg-hover/40 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-200">
+                Filters — every entry must also satisfy these
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setFilters((fs) => [...fs, { ...emptyCondition(), enabled: true }])
+                }
+                className={`${PILL_BTN} bg-bg-hover text-zinc-300 hover:text-white`}
+              >
+                + Filter
+              </button>
+            </div>
+            <div className="mt-3 space-y-3">
+              {filters.length === 0 && (
+                <p className="text-xs text-zinc-500">
+                  No filters — entries fire on the trigger alone. Add one to gate
+                  signals (e.g. only go long while price &gt; SMA 200).
+                </p>
+              )}
+              {filters.map((f, i) => (
+                <div key={i} className="grid gap-2 lg:grid-cols-[1fr_auto_1fr_auto]">
+                  <OperandEditor
+                    state={f.left}
+                    onChange={(left) =>
+                      setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, left } : x)))
+                    }
+                  />
+                  <select
+                    className={INPUT_CLASS}
+                    value={f.op}
+                    onChange={(e) =>
+                      setFilters((fs) =>
+                        fs.map((x, j) =>
+                          j === i ? { ...x, op: e.target.value as ConditionOp } : x,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="gt">&gt;</option>
+                    <option value="lt">&lt;</option>
+                    <option value="cross_above">crosses above</option>
+                    <option value="cross_below">crosses below</option>
+                  </select>
+                  <OperandEditor
+                    state={f.right}
+                    onChange={(right) =>
+                      setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, right } : x)))
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))}
+                    className={`${PILL_BTN} bg-bg-hover text-accent-red hover:bg-accent-red/20`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
             <BracketEditor title="Stop loss" state={sl} onChange={setSl} />

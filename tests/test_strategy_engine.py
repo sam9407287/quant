@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.strategies.engine import evaluate
-from app.strategies.schemas import (
+from app.strategies.schemas import (  # noqa
     Bracket,
     Condition,
     Operand,
@@ -252,3 +252,54 @@ class TestDefinitionValidation:
     def test_const_requires_value(self) -> None:
         with pytest.raises(ValidationError, match="const"):
             Operand(kind="const")
+
+
+class TestIndicatorsAndFilters:
+    def test_macd_operand_runs(self) -> None:
+        d = defn(
+            entry_long=cross_above(
+                Operand(kind="macd", window=3, window2=6),
+                Operand(kind="macd_signal", window=3, window2=6),
+            ),
+        )
+        ramp = [(100 - i, 100 - i + 0.5, 100 - i - 0.5, 100 - i) for i in range(12)]
+        ramp += [(88 + i * 2, 88 + i * 2 + 1, 88 + i * 2 - 1, 88 + i * 2) for i in range(12)]
+        trades = evaluate(mk_df(ramp), d)
+        assert all(t.direction == "long" for t in trades)
+
+    def test_atr_and_roc_operands_evaluate(self) -> None:
+        for kind in ("atr", "roc"):
+            d = defn(
+                entry_long=Condition(
+                    op="gt", left=Operand(kind=kind, window=3), right=const(0.0)
+                ),
+            )
+            # Just needs to run without error over enough bars.
+            bars = [(100 + (i % 5),) * 4 for i in range(20)]
+            evaluate(mk_df(bars), d)
+
+    def test_bollinger_default_std(self) -> None:
+        op = Operand(kind="bollinger_upper", window=20)
+        assert op.value == 2.0  # validator fills the classic multiple
+
+    def test_filter_blocks_entry_when_false(self) -> None:
+        # Entry triggers when price crosses 100, but a filter requires
+        # price > 200 — which never holds, so no trade fires.
+        d = defn(
+            entry_long=cross_above(price(), const(100.0)),
+            filters=[Condition(op="gt", left=price(), right=const(200.0))],
+        )
+        df = mk_df([(99, 99, 99, 99), (101, 101, 101, 101), (103, 103, 103, 103),
+                    (105, 105, 105, 105), (107, 107, 107, 107)])
+        assert evaluate(df, d) == []
+
+    def test_filter_allows_entry_when_true(self) -> None:
+        d = defn(
+            entry_long=cross_above(price(), const(100.0)),
+            filters=[Condition(op="gt", left=price(), right=const(50.0))],
+        )
+        df = mk_df([(99, 99, 99, 99), (101, 101, 101, 101), (103, 103, 103, 103),
+                    (105, 105, 105, 105), (107, 107, 107, 107)])
+        trades = evaluate(df, d)
+        assert len(trades) == 1
+        assert trades[0].direction == "long"

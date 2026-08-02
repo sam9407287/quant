@@ -78,10 +78,13 @@ same shared params context, duplicates are simply extra editing handles
 
 Ordered by value; each maps cleanly onto existing building blocks:
 
-1. **Filter vs trigger vs value rules.** The strategy schema treats all
-   conditions as triggers. Add explicit **filter** conditions (must be
-   true, not a discrete cross) and a **value/rank** rule for choosing
-   among same-bar signals.
+1. ~~**Filter vs trigger rules.**~~ ✅ 2026-08-03: `StrategyDefinition`
+   gained a `filters` list — standing conditions ANDed with every entry
+   trigger (curriculum's trigger-vs-filter distinction). Operand set
+   expanded with MACD / MACD-signal / ATR / ROC / Bollinger bands. Both
+   surface in the form builder and a new drag **Strategy Canvas**
+   (`/research/strategies/canvas`). Still open: a **value/rank** rule
+   for choosing among same-bar signals.
 2. **Benchmark overlay** on the signal test (index forward path + the
    relative outperformance line).
 3. **Richer performance metrics** on backtests: Sharpe, Sortino,

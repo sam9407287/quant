@@ -11,14 +11,21 @@ export type OperandKind =
   | "sma"
   | "rsi"
   | "highest_high"
-  | "lowest_low";
+  | "lowest_low"
+  | "macd"
+  | "macd_signal"
+  | "atr"
+  | "roc"
+  | "bollinger_upper"
+  | "bollinger_lower";
 
 export type ConditionOp = "cross_above" | "cross_below" | "gt" | "lt";
 
 export interface Operand {
   kind: OperandKind;
   window?: number;
-  value?: number | null;
+  window2?: number; // macd slow period
+  value?: number | null; // const value or bollinger std multiple
 }
 
 export interface Condition {
@@ -39,6 +46,7 @@ export interface StrategyDefinition {
   entry_short: Condition | null;
   exit_long: Condition | null;
   exit_short: Condition | null;
+  filters: Condition[];
   sl: Bracket | null;
   tp: Bracket | null;
 }
@@ -183,7 +191,16 @@ export function operandLabel(o: Operand): string {
     rsi: "RSI",
     highest_high: "HH",
     lowest_low: "LL",
+    macd: "MACD",
+    macd_signal: "MACD-sig",
+    atr: "ATR",
+    roc: "ROC",
+    bollinger_upper: "BB-upper",
+    bollinger_lower: "BB-lower",
   };
+  if (o.kind === "macd" || o.kind === "macd_signal") {
+    return `${names[o.kind]}(${o.window ?? 12},${o.window2 ?? 26})`;
+  }
   return `${names[o.kind] ?? o.kind}(${o.window ?? "?"})`;
 }
 

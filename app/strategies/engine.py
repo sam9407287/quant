@@ -45,9 +45,26 @@ class Trade:
         return sign * (self.exit_price - self.entry_price)
 
 
+def _ema(s: pd.Series, span: int) -> pd.Series:
+    return s.ewm(span=span, adjust=False).mean()
+
+
+def _atr(df: pd.DataFrame, window: int) -> pd.Series:
+    """Wilder-style Average True Range."""
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    return tr.ewm(alpha=1.0 / window, adjust=False).mean()
+
+
 def _operand_series(df: pd.DataFrame, op: Operand) -> pd.Series:
+    close = df["close"].astype(float)
     if op.kind == "price":
-        return df["close"].astype(float)
+        return close
     if op.kind == "const":
         return pd.Series(float(op.value or 0.0), index=df.index)
     if op.kind == "highest_high":
@@ -56,8 +73,23 @@ def _operand_series(df: pd.DataFrame, op: Operand) -> pd.Series:
         return df["high"].astype(float).rolling(op.window).max().shift(1)
     if op.kind == "lowest_low":
         return df["low"].astype(float).rolling(op.window).min().shift(1)
+    if op.kind == "macd":
+        return _ema(close, op.window) - _ema(close, op.window2)
+    if op.kind == "macd_signal":
+        return _ema(_ema(close, op.window) - _ema(close, op.window2), 9)
+    if op.kind == "atr":
+        return _atr(df, op.window)
+    if op.kind == "roc":
+        # Rate of change, %: return over the prior `window` bars.
+        return (close / close.shift(op.window) - 1.0) * 100.0
+    if op.kind in ("bollinger_upper", "bollinger_lower"):
+        mid = close.rolling(op.window).mean()
+        band = close.rolling(op.window).std(ddof=0) * float(op.value or 2.0)
+        return mid + band if op.kind == "bollinger_upper" else mid - band
     # ema / sma / rsi — same math the ML workbench uses.
-    return build_feature(df, FeatureSpec(kind=op.kind, window=op.window))
+    if op.kind == "ema" or op.kind == "sma" or op.kind == "rsi":
+        return build_feature(df, FeatureSpec(kind=op.kind, window=op.window))
+    raise ValueError(f"unhandled operand kind: {op.kind}")
 
 
 def _condition_series(df: pd.DataFrame, cond: Condition | None) -> pd.Series:
@@ -77,6 +109,24 @@ def _condition_series(df: pd.DataFrame, cond: Condition | None) -> pd.Series:
     return out.fillna(False)
 
 
+def _filter_mask(df: pd.DataFrame, defn: StrategyDefinition) -> pd.Series:
+    """AND of every filter condition — the standing gate on all entries."""
+    mask = pd.Series(True, index=df.index)
+    for f in defn.filters:
+        mask &= _condition_series(df, f)
+    return mask
+
+
+def entry_signal(df: pd.DataFrame, defn: StrategyDefinition, direction: str) -> pd.Series:
+    """Boolean entry series for a direction: trigger AND all filters.
+
+    Shared by the engine and the signal test so both agree on when a
+    strategy's entry actually fires.
+    """
+    trigger = defn.entry_long if direction == "long" else defn.entry_short
+    return _condition_series(df, trigger) & _filter_mask(df, defn)
+
+
 def _bracket_level(entry: float, bracket: Bracket | None, sign: float, side: float) -> float | None:
     """side=-1 for stop (against the position), +1 for target."""
     if bracket is None:
@@ -90,8 +140,10 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
     if df.empty:
         return []
     df = df.reset_index(drop=True)
-    el = _condition_series(df, defn.entry_long)
-    es = _condition_series(df, defn.entry_short)
+    # Entries are gated by the filters; exits are not (you must be able
+    # to leave a position even when a filter has since turned false).
+    el = entry_signal(df, defn, "long")
+    es = entry_signal(df, defn, "short")
     xl = _condition_series(df, defn.exit_long)
     xs = _condition_series(df, defn.exit_short)
 

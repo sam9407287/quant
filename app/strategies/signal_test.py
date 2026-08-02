@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from app.strategies.engine import _condition_series
+from app.strategies.engine import entry_signal
 from app.strategies.schemas import StrategyDefinition
 
 
@@ -81,8 +81,8 @@ def signal_test(
     df = df.reset_index(drop=True)
     close = df["close"].astype(float).to_numpy()
 
-    long_sig = _condition_series(df, defn.entry_long).to_numpy()
-    short_sig = _condition_series(df, defn.entry_short).to_numpy()
+    long_sig = entry_signal(df, defn, "long").to_numpy()
+    short_sig = entry_signal(df, defn, "short").to_numpy()
 
     long_fwd = _forward_returns(close, np.flatnonzero(long_sig), 1.0, horizon)
     short_fwd = _forward_returns(close, np.flatnonzero(short_sig), -1.0, horizon)
