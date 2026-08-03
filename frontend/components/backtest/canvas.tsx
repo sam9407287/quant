@@ -8,8 +8,9 @@
 // node data stays empty (id/type/position only), so dragging never
 // fights the field edits and the compile step is a plain context read.
 // Nodes themselves are controlled state so modules can be added,
-// duplicated and deleted from the toolbar — every node type edits the
-// same shared params, so duplicates are just extra editing handles.
+// duplicated and deleted — every node type edits the same shared params,
+// so duplicates are just extra editing handles. Deleting is primarily a
+// × on the node header; the toolbar keeps a bulk version for selections.
 
 import {
   Background,
@@ -21,6 +22,7 @@ import {
   useNodesState,
   type Edge,
   type Node,
+  type NodeProps,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -75,6 +77,7 @@ interface CanvasState {
   error: string | null;
   result: RunResponse | null;
   run: () => void;
+  removeNode: (id: string) => void;
 }
 
 const Ctx = createContext<CanvasState | null>(null);
@@ -94,21 +97,42 @@ const NLABEL =
   "block font-mono text-[10px] uppercase tracking-wider text-zinc-500";
 
 function Shell({
+  nodeId,
   title,
   children,
   input,
   output,
 }: {
+  nodeId: string;
   title: string;
   children: React.ReactNode;
   input?: boolean;
   output?: boolean;
 }) {
+  const { removeNode } = useCanvas();
   return (
-    <div className="w-56 rounded-lg border border-border bg-bg-panel shadow-lg">
+    <div className="group w-56 rounded-lg border border-border bg-bg-panel shadow-lg">
       {input && <Handle type="target" position={Position.Left} />}
-      <div className="rounded-t-lg border-b border-border bg-bg-hover px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-accent-blue">
-        {title}
+      <div className="flex items-center gap-2 rounded-t-lg border-b border-border bg-bg-hover px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-accent-blue">
+        <span className="truncate">{title}</span>
+        {/* Delete lives on the node itself — the toolbar button was not
+            discoverable. `nodrag` stops React Flow from starting a drag,
+            and stopPropagation keeps the click off the node selection. */}
+        <button
+          type="button"
+          aria-label={`Delete ${title} node`}
+          title="Delete this node"
+          onClick={(e) => {
+            e.stopPropagation();
+            removeNode(nodeId);
+          }}
+          className="nodrag ml-auto -mr-1 grid h-5 w-5 shrink-0 place-items-center rounded
+                     text-sm leading-none text-zinc-600 opacity-0 transition
+                     hover:bg-accent-red/20 hover:text-accent-red focus:opacity-100
+                     focus:outline-none group-hover:opacity-100"
+        >
+          ×
+        </button>
       </div>
       <div className="space-y-2 p-3">{children}</div>
       {output && <Handle type="source" position={Position.Right} />}
@@ -118,10 +142,10 @@ function Shell({
 
 // ── Nodes ─────────────────────────────────────────────────────────
 
-function UniverseNode() {
+function UniverseNode({ id }: NodeProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell title="Universe" output>
+    <Shell nodeId={id} title="Universe" output>
       <label className={NLABEL}>Instrument</label>
       <select
         className={FIELD}
@@ -144,11 +168,11 @@ function UniverseNode() {
   );
 }
 
-function ClockNode() {
+function ClockNode({ id }: NodeProps) {
   const { params, updateClock } = useCanvas();
   const c = params.clock;
   return (
-    <Shell title="Session clock" output>
+    <Shell nodeId={id} title="Session clock" output>
       <label className={NLABEL}>Timezone</label>
       <input className={FIELD} value={c.tz} onChange={(e) => updateClock({ tz: e.target.value })} />
       <label className={NLABEL}>Range window</label>
@@ -165,10 +189,10 @@ function ClockNode() {
   );
 }
 
-function EntryNode() {
+function EntryNode({ id }: NodeProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell title="Entry" input output>
+    <Shell nodeId={id} title="Entry" input output>
       <label className={NLABEL}>Direction</label>
       <select className={FIELD} value={params.direction_mode} onChange={(e) => update({ direction_mode: e.target.value as DirectionMode })}>
         <option value="fade">fade (mean reversion)</option>
@@ -187,10 +211,10 @@ function EntryNode() {
   );
 }
 
-function RiskNode() {
+function RiskNode({ id }: NodeProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell title="Risk bracket" input output>
+    <Shell nodeId={id} title="Risk bracket" input output>
       <label className={NLABEL}>Stop mode · value</label>
       <div className="flex gap-2">
         <select className={FIELD} value={params.sl_mode} onChange={(e) => update({ sl_mode: e.target.value as OffsetMode })}>
@@ -212,10 +236,10 @@ function RiskNode() {
   );
 }
 
-function RunNode() {
+function RunNode({ id }: NodeProps) {
   const { busy, error, result, run } = useCanvas();
   return (
-    <Shell title="Run" input>
+    <Shell nodeId={id} title="Run" input>
       <button
         type="button"
         onClick={run}
@@ -289,9 +313,26 @@ export function BacktestCanvas() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RunResponse | null>(null);
 
+  // Controlled node/edge state so modules can be added, duplicated and
+  // deleted (the uncontrolled defaultNodes could not change after mount).
+  // Declared above `state` because the context exposes removeNode.
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL_NODES);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(INITIAL_EDGES);
+  const [seq, setSeq] = useState(1);
+
+  // Drop a node and every edge that touched it, so no dangling edge is left.
+  const removeNode = useCallback(
+    (id: string) => {
+      setNodes((ns) => ns.filter((n) => n.id !== id));
+      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
+    },
+    [setNodes, setEdges],
+  );
+
   const state = useMemo<CanvasState>(
     () => ({
       params,
+      removeNode,
       update: (patch) => setParams((p) => ({ ...p, ...patch })),
       updateClock: (patch) =>
         setParams((p) => ({ ...p, clock: { ...p.clock, ...patch } })),
@@ -311,14 +352,8 @@ export function BacktestCanvas() {
         }
       },
     }),
-    [params, busy, error, result],
+    [params, busy, error, result, removeNode],
   );
-
-  // Controlled node/edge state so modules can be added, duplicated and
-  // deleted (the uncontrolled defaultNodes could not change after mount).
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL_NODES);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(INITIAL_EDGES);
-  const [seq, setSeq] = useState(1);
 
   const addNode = useCallback(
     (type: string) => {
@@ -395,7 +430,7 @@ export function BacktestCanvas() {
           Reset
         </button>
         <span className="ml-auto px-1 text-[10px] text-zinc-600">
-          click a node to select · Duplicate/Delete act on the selection
+          hover a node and hit × to delete it · these buttons act on the selection
         </span>
       </div>
       <div className="h-[640px] rounded-lg border border-border bg-bg">
