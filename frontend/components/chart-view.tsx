@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
+  PriceScaleMode,
+  type AutoscaleInfo,
   type IChartApi,
   type ISeriesApi,
   type SeriesMarker,
@@ -15,42 +17,27 @@ import {
 
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
 import { ChartTypeMenu } from "@/components/chart/type-menu";
+import { InstrumentSearch } from "@/components/chart/instrument-search";
+import { TimeframeMenu } from "@/components/chart/timeframe-menu";
+import {
+  NATIVE_MINUTES,
+  lookbackDays,
+  makeInterval,
+  resample,
+  type Interval,
+} from "@/lib/timeframes";
 import { buildChart, type ChartKind, type SeriesBuild } from "@/lib/chart-series";
 import { GOOGLE_CLIENT_ID, useAuth } from "@/lib/auth";
 import { fetchCoverage, fetchKBars } from "@/lib/api";
 import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
 import { evaluateStrategy, listStrategies } from "@/lib/strategies";
-import type { AssetClass, Instrument, KBar, Timeframe } from "@/lib/types";
-import {
-  ASSET_CLASSES,
-  ASSET_CLASS_LABEL,
-  INSTRUMENT_META,
-  INSTRUMENTS_BY_CLASS,
-  TIMEFRAMES,
-} from "@/lib/types";
+import type { Instrument, KBar, Timeframe } from "@/lib/types";
+import { INSTRUMENT_META } from "@/lib/types";
 
 interface Props {
   initialInstrument: Instrument;
   initialTimeframe: Timeframe;
 }
-
-// Default lookback windows per timeframe, sized so the user gets a useful
-// number of candles on first load without overshooting the 50 000-bar API
-// cap. Numbers are calibrated against CME Globex session density.
-//
-// The window ends at the newest bar the backend actually holds, NOT at
-// wall-clock now. Anchoring to now produced an empty chart for every
-// instrument whenever the fetcher fell behind by more than the lookback —
-// at 1m (2 days) that was the whole instrument list within 48 hours.
-const DEFAULT_LOOKBACK_DAYS: Record<Timeframe, number> = {
-  "1m": 2,
-  "5m": 7,
-  "15m": 14,
-  "1h": 60,
-  "4h": 180,
-  "1d": 365 * 2,
-  "1w": 365 * 5,
-};
 
 function toUtcSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -79,10 +66,11 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const { user } = useAuth();
   const authed = !GOOGLE_CLIENT_ID || user !== null;
   const [instrument, setInstrument] = useState<Instrument>(initialInstrument);
-  const [activeClass, setActiveClass] = useState<AssetClass>(
-    INSTRUMENT_META[initialInstrument].assetClass,
+  const [interval, setInterval] = useState<Interval>(() =>
+    makeInterval(NATIVE_MINUTES[initialTimeframe]),
   );
-  const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
+  // The stored timeframe actually requested; folded intervals borrow theirs.
+  const timeframe: Timeframe = interval.base;
   const [bars, setBars] = useState<KBar[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -95,6 +83,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
   const [chartKind, setChartKind] = useState<ChartKind>("candles");
   const [buildNote, setBuildNote] = useState<string | null>(null);
+  const [scaleMode, setScaleMode] = useState<"normal" | "log" | "pct">("normal");
+  // Vertical zoom factor for the price axis; 1 = fit the data exactly.
+  const priceZoomRef = useRef(1);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -134,10 +125,10 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     if (!anchorReady || !anchor) return null;
     const end = anchor.iso ? new Date(anchor.iso) : new Date();
     const start = new Date(end);
-    start.setUTCDate(end.getUTCDate() - DEFAULT_LOOKBACK_DAYS[timeframe]);
+    start.setUTCDate(end.getUTCDate() - lookbackDays(interval));
     // Ask slightly past the last bar so the newest one is never clipped.
     return { start, end: new Date(end.getTime() + 86_400_000) };
-  }, [anchorReady, anchor, timeframe]);
+  }, [anchorReady, anchor, interval]);
 
   // Initialise the chart instance once and tear it down on unmount; resize
   // observation lives in the same effect so it registers exactly once.
@@ -180,6 +171,64 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     };
   }, []);
 
+  // Shrinks the auto-computed price range around its midpoint. Reading the
+  // factor from a ref means zooming never has to rebuild the series.
+  const zoomProvider = useCallback(
+    (base: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+      const info = base();
+      const zoom = priceZoomRef.current;
+      if (!info?.priceRange || zoom === 1) return info;
+      const { minValue, maxValue } = info.priceRange;
+      const mid = (minValue + maxValue) / 2;
+      const half = (maxValue - minValue) / 2 / zoom;
+      return { ...info, priceRange: { minValue: mid - half, maxValue: mid + half } };
+    },
+    [],
+  );
+
+  // A *new* function identity per call is what invalidates the cached
+  // autoscale info; re-applying the same reference is treated as no change
+  // and the axis never moves.
+  const refreshPriceZoom = useCallback(() => {
+    priceRef.current?.applyOptions({
+      autoscaleInfoProvider: (base: () => AutoscaleInfo | null) => zoomProvider(base),
+    });
+  }, [zoomProvider]);
+
+  // Arithmetic / logarithmic / percentage price axis.
+  useEffect(() => {
+    chartRef.current?.priceScale("right").applyOptions({
+      mode:
+        scaleMode === "log"
+          ? PriceScaleMode.Logarithmic
+          : scaleMode === "pct"
+            ? PriceScaleMode.Percentage
+            : PriceScaleMode.Normal,
+    });
+  }, [scaleMode]);
+
+  // Wheel over the price axis zooms it. lightweight-charts only scales the
+  // price axis by dragging it, so the wheel is wired here and applied by
+  // narrowing the autoscale range through the series' own provider — the
+  // only public hook that changes the visible price span.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const rect = el.getBoundingClientRect();
+      const axisWidth = chart.priceScale("right").width();
+      if (e.clientX < rect.right - axisWidth) return; // not over the axis
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
+      priceZoomRef.current = Math.min(20, Math.max(0.2, priceZoomRef.current * factor));
+      refreshPriceZoom();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   // Saved strategies for the overlay picker (only once signed in).
   useEffect(() => {
     if (!authed) {
@@ -215,7 +264,8 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     )
       .then((res) => {
         if (superseded) return;
-        setBars(res.data);
+        // Native intervals pass straight through; the rest are folded here.
+        setBars(resample(res.data, interval));
       })
       .catch((e: unknown) => {
         // `superseded` rather than signal.aborted alone: a cancelled request
@@ -233,7 +283,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       superseded = true;
       controller.abort();
     };
-  }, [instrument, timeframe, range]);
+  }, [instrument, timeframe, interval, range]);
 
   // Evaluate the selected strategy over the same instrument/range the
   // chart is showing. Selecting a strategy forces the chart onto the
@@ -274,16 +324,16 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     setStrategyId(id);
     if (id) {
       const s = strategies.find((x) => x.id === id);
-      if (s) setTimeframe(s.definition.timeframe);
+      if (s) setInterval(makeInterval(NATIVE_MINUTES[s.definition.timeframe]));
     }
   }
 
-  function selectTimeframe(t: Timeframe) {
-    setTimeframe(t);
-    // A strategy is pinned to its own timeframe — switching away
-    // removes the overlay rather than showing misaligned trades.
+  function selectInterval(next: Interval) {
+    setInterval(next);
+    // A strategy is pinned to its own timeframe — moving off it removes the
+    // overlay rather than drawing trades against bars they never traded on.
     const s = strategies.find((x) => x.id === strategyId);
-    if (s && s.definition.timeframe !== t) setStrategyId("");
+    if (s && NATIVE_MINUTES[s.definition.timeframe] !== next.minutes) setStrategyId("");
   }
 
   // Rebuild the price series whenever the bars or the chart type change.
@@ -309,6 +359,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     });
     priceRef.current = created[0] ?? null;
     extraRef.current = created.slice(1);
+    priceRef.current?.applyOptions({ autoscaleInfoProvider: zoomProvider });
 
     if (priceRef.current) {
       const boxes = new TradeBoxesPrimitive(chart, priceRef.current);
@@ -327,7 +378,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         : [],
     );
     chart.timeScale().fitContent();
-  }, [bars, chartKind]);
+  }, [bars, chartKind, zoomProvider]);
 
   // Trade overlay: entry/exit markers + SL/TP position boxes.
   useEffect(() => {
@@ -388,71 +439,53 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2 rounded-lg border border-border bg-bg-panel p-3">
-        {/* Level 1: asset-class tabs */}
-        <div className="flex flex-wrap gap-1">
-          {ASSET_CLASSES.map((cls) => (
-            <button
-              key={cls}
-              type="button"
-              onClick={() => {
-                setActiveClass(cls);
-                // Switching category selects its first instrument so the
-                // chart always reflects the visible pill row.
-                const first = INSTRUMENTS_BY_CLASS[cls][0];
-                if (first && INSTRUMENT_META[instrument].assetClass !== cls) {
-                  setInstrument(first);
-                }
-              }}
-              className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
-                activeClass === cls
-                  ? "bg-accent-blue/20 text-accent-blue"
-                  : "text-zinc-500 hover:bg-bg-hover hover:text-zinc-200"
-              }`}
-            >
-              {ASSET_CLASS_LABEL[cls]}
-            </button>
-          ))}
-        </div>
-        {/* Level 2: instruments in the active class + timeframe + strategy */}
-        <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-1">
-          {INSTRUMENTS_BY_CLASS[activeClass].map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setInstrument(s)}
-              title={INSTRUMENT_META[s].name}
-              className={`rounded-md px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
-                instrument === s
-                  ? "bg-accent-blue text-white"
-                  : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <div className="h-5 w-px bg-border" />
-        <div className="flex gap-1">
-          {TIMEFRAMES.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => selectTimeframe(t)}
-              className={`rounded-md px-2.5 py-1.5 font-mono text-xs transition ${
-                timeframe === t
-                  ? "bg-accent-blue text-white"
-                  : "bg-bg-hover text-zinc-400 hover:text-zinc-100"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div className="h-5 w-px bg-border" />
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-panel p-2">
+        <InstrumentSearch value={instrument} onChange={setInstrument} />
+        <TimeframeMenu value={interval} onChange={selectInterval} />
         <ChartTypeMenu value={chartKind} onChange={setChartKind} />
+
         <div className="h-5 w-px bg-border" />
+
+        {/* Price-axis scale. Percentage is the same axis expressed as a
+            move from the first visible bar, which is why it sits here. */}
+        <div className="flex rounded-md border border-border bg-bg-hover p-0.5">
+          {(
+            [
+              ["normal", "Lin", "Arithmetic scale"],
+              ["log", "Log", "Logarithmic scale"],
+              ["pct", "%", "Percentage scale"],
+            ] as const
+          ).map(([mode, label, title]) => (
+            <button
+              key={mode}
+              type="button"
+              title={title}
+              onClick={() => setScaleMode(mode)}
+              className={`rounded px-2 py-1 font-mono text-[11px] transition ${
+                scaleMode === mode
+                  ? "bg-accent-blue/20 text-accent-blue"
+                  : "text-zinc-500 hover:text-zinc-100"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          title="Reset the price-axis zoom"
+          onClick={() => {
+            priceZoomRef.current = 1;
+            refreshPriceZoom();
+          }}
+          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-[11px] text-zinc-500 transition hover:text-zinc-100"
+        >
+          Fit
+        </button>
+
+        <div className="h-5 w-px bg-border" />
+
         <select
           value={strategyId}
           onChange={(e) => selectStrategy(e.target.value)}
@@ -467,17 +500,15 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             </option>
           ))}
         </select>
+
         <div className="ml-auto flex items-center gap-3 text-xs text-zinc-500">
           <span>
             {INSTRUMENT_META[instrument].name} ·{" "}
-            <span className="text-zinc-400">
-              {INSTRUMENT_META[instrument].exchange}
-            </span>
+            <span className="text-zinc-400">{INSTRUMENT_META[instrument].exchange}</span>
           </span>
           <span>
             {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
           </span>
-        </div>
         </div>
       </div>
 
