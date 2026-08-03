@@ -18,6 +18,9 @@ import {
   updateStrategy,
 } from "@/lib/strategies";
 import { TIMEFRAMES, type Timeframe } from "@/lib/types";
+import { useAuth } from "@/lib/auth";
+import { copyStrategy } from "@/lib/strategies";
+import { SharingPanel } from "@/components/strategies/sharing";
 
 const SECTION_CLASS =
   "rounded-lg border border-border bg-bg-panel p-5 space-y-4";
@@ -270,6 +273,17 @@ function BracketEditor({
 
 export function StrategyManager() {
   const [strategies, setStrategies] = useState<StrategyRecord[]>([]);
+  const { user } = useAuth();
+  const myEmail = user?.email?.toLowerCase() ?? null;
+  // Rows arrive newest-first across every visible owner; grouping keeps each
+  // account's strategies together without disturbing that order inside a group.
+  const grouped = strategies.reduce<Map<string, StrategyRecord[]>>((acc, s) => {
+    const key = s.owner_email ?? "(unowned)";
+    (acc.get(key) ?? acc.set(key, []).get(key)!).push(s);
+    return acc;
+  }, new Map());
+  const ownedByMe = (s: StrategyRecord) =>
+    myEmail !== null && s.owner_email?.toLowerCase() === myEmail;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
@@ -377,6 +391,19 @@ export function StrategyManager() {
     }
   }
 
+  /** Read-plus-copy: the shared original is never touched. */
+  async function duplicate(id: string) {
+    setBusy(true);
+    try {
+      await copyStrategy(id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(id: string) {
     setBusy(true);
     try {
@@ -410,42 +437,79 @@ export function StrategyManager() {
             Nothing saved yet — build your first strategy below.
           </p>
         ) : (
-          <table className="min-w-full font-mono text-xs">
-            <thead className="text-left text-zinc-500">
-              <tr>
-                {["Name", "TF", "Entry long", "Entry short", "SL/TP", ""].map((h) => (
-                  <th key={h} className="px-3 py-2 font-normal uppercase tracking-wider">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border text-zinc-300">
-              {strategies.map((s) => (
-                <tr key={s.id}>
-                  <td className="px-3 py-2 text-zinc-100">{s.name}</td>
-                  <td className="px-3 py-2">{s.definition.timeframe}</td>
-                  <td className="px-3 py-2">{conditionLabel(s.definition.entry_long)}</td>
-                  <td className="px-3 py-2">{conditionLabel(s.definition.entry_short)}</td>
-                  <td className="px-3 py-2">
-                    {s.definition.sl ? `SL ${s.definition.sl.value}${s.definition.sl.mode === "pct" ? "%" : "pt"}` : "—"}
-                    {" / "}
-                    {s.definition.tp ? `TP ${s.definition.tp.value}${s.definition.tp.mode === "pct" ? "%" : "pt"}` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button type="button" onClick={() => startEdit(s)} className={`${PILL_BTN} bg-bg-hover text-zinc-300 hover:text-white`}>
-                      Edit
-                    </button>{" "}
-                    <button type="button" onClick={() => void remove(s.id)} disabled={busy} className={`${PILL_BTN} bg-bg-hover text-accent-red hover:bg-accent-red/20`}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-5">
+            {[...grouped.entries()].map(([owner, rows]) => (
+              <div key={owner}>
+                <div className="mb-1 flex items-center gap-2 px-3">
+                  <span className="font-mono text-[11px] text-zinc-400">{owner}</span>
+                  {owner.toLowerCase() === myEmail ? (
+                    <span className="rounded bg-accent-blue/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-blue">
+                      you
+                    </span>
+                  ) : (
+                    <span className="rounded bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-300">
+                      shared
+                    </span>
+                  )}
+                  <span className="font-mono text-[10px] text-zinc-600">
+                    {rows.length}
+                  </span>
+                </div>
+                <table className="min-w-full font-mono text-xs">
+                  <thead className="text-left text-zinc-500">
+                    <tr>
+                      {["Name", "TF", "Entry long", "Entry short", "SL/TP", ""].map((h) => (
+                        <th key={h} className="px-3 py-2 font-normal uppercase tracking-wider">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border text-zinc-300">
+                    {rows.map((s) => (
+                      <tr key={s.id}>
+                        <td className="px-3 py-2 text-zinc-100">{s.name}</td>
+                        <td className="px-3 py-2">{s.definition.timeframe}</td>
+                        <td className="px-3 py-2">{conditionLabel(s.definition.entry_long)}</td>
+                        <td className="px-3 py-2">{conditionLabel(s.definition.entry_short)}</td>
+                        <td className="px-3 py-2">
+                          {s.definition.sl ? `SL ${s.definition.sl.value}${s.definition.sl.mode === "pct" ? "%" : "pt"}` : "—"}
+                          {" / "}
+                          {s.definition.tp ? `TP ${s.definition.tp.value}${s.definition.tp.mode === "pct" ? "%" : "pt"}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {ownedByMe(s) || s.owner_email === null ? (
+                            <>
+                              <button type="button" onClick={() => startEdit(s)} className={`${PILL_BTN} bg-bg-hover text-zinc-300 hover:text-white`}>
+                                Edit
+                              </button>{" "}
+                              <button type="button" onClick={() => void remove(s.id)} disabled={busy} className={`${PILL_BTN} bg-bg-hover text-accent-red hover:bg-accent-red/20`}>
+                                Delete
+                              </button>
+                            </>
+                          ) : (
+                            /* Shared rows are read-plus-copy: no edit, no delete. */
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void duplicate(s.id)}
+                              className={`${PILL_BTN} bg-bg-hover text-accent-blue hover:bg-accent-blue/20`}
+                            >
+                              Copy to mine
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         )}
       </section>
+
+      <SharingPanel onChanged={() => void refresh()} />
 
       {error && (
         <pre className="whitespace-pre-wrap rounded-md border border-accent-red/40 bg-accent-red/10 p-4 text-xs text-accent-red">

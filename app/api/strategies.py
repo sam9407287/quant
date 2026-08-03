@@ -23,6 +23,7 @@ from app.core.instruments import Symbol as Instrument
 from app.db.session import get_db
 from app.strategies.engine import Trade, evaluate
 from app.strategies.loader import load_bars_df
+from app.strategies.access import granted_owner_ids
 from app.strategies.repository import (
     delete_strategy,
     get_strategy,
@@ -36,6 +37,14 @@ from app.strategies.signal_test import signal_test
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/strategies", tags=["strategies"])
+
+
+async def _readable_owners(db: AsyncSession, user: CurrentUser) -> list[str] | None:
+    """Owner ids this caller may read: their own plus anyone who granted them
+    access. None for admins, who see everything."""
+    if user.is_admin:
+        return None
+    return [user.id, *await granted_owner_ids(db, user.id)]
 
 
 class StrategyCreate(BaseModel):
@@ -180,7 +189,7 @@ async def list_all(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[StrategyRecord]:
-    rows = await list_strategies(db, limit=limit, owner_id=user.owner_filter)
+    rows = await list_strategies(db, limit=limit, owner_ids=await _readable_owners(db, user))
     return [StrategyRecord(**r) for r in rows]
 
 
@@ -190,7 +199,7 @@ async def get_one(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> StrategyRecord:
-    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
+    row = await get_strategy(db, strategy_id, owner_ids=await _readable_owners(db, user))
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     return StrategyRecord(**row)
@@ -230,6 +239,33 @@ async def delete(
 
 
 @router.post(
+    "/{strategy_id}/copy",
+    response_model=StrategyRecord,
+    summary="Copy a readable strategy into your own account",
+)
+async def copy(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> StrategyRecord:
+    """The write half of read-plus-copy: the source row is never touched."""
+    row = await get_strategy(db, strategy_id, owner_ids=await _readable_owners(db, user))
+    if row is None:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    source_owner = row.get("owner_email") or "unknown"
+    new_id = await insert_strategy(
+        db,
+        name=f"{row['name']} (copy)",
+        description=(row.get("description") or "") + f"\n\nCopied from {source_owner}.",
+        definition=row["definition"],
+        owner_id=user.id,
+    )
+    created = await get_strategy(db, new_id)
+    assert created is not None
+    return StrategyRecord(**created)
+
+
+@router.post(
     "/{strategy_id}/evaluate",
     response_model=EvaluateResponse,
     summary="Evaluate a strategy over stored bars → trades + metrics",
@@ -240,7 +276,7 @@ async def evaluate_strategy(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> EvaluateResponse:
-    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
+    row = await get_strategy(db, strategy_id, owner_ids=await _readable_owners(db, user))
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     defn = StrategyDefinition.model_validate(row["definition"])
@@ -280,7 +316,7 @@ async def signal_test_strategy(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> SignalTestResponse:
-    row = await get_strategy(db, strategy_id, owner_id=user.owner_filter)
+    row = await get_strategy(db, strategy_id, owner_ids=await _readable_owners(db, user))
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     defn = StrategyDefinition.model_validate(row["definition"])

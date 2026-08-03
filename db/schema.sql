@@ -348,5 +348,29 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE strategies    ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
 ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
 
+-- Strategy sharing between accounts. A row is one direction of a pair:
+-- `grantee_id` asking to read `owner_id`'s strategies. Kept in sync with
+-- db/migrations/001_strategy_access.sql, which applies it to a database
+-- that already exists (this file only runs on a fresh volume).
+CREATE TABLE IF NOT EXISTS strategy_access (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    grantee_id   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status       TEXT        NOT NULL DEFAULT 'pending',
+    message      TEXT,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at   TIMESTAMPTZ,
+    seen_at      TIMESTAMPTZ,
+    CONSTRAINT strategy_access_not_self CHECK (owner_id <> grantee_id),
+    CONSTRAINT strategy_access_status
+        CHECK (status IN ('pending', 'granted', 'denied', 'revoked')),
+    CONSTRAINT strategy_access_pair UNIQUE (owner_id, grantee_id)
+);
+
+CREATE INDEX IF NOT EXISTS strategy_access_owner_idx
+    ON strategy_access (owner_id, status);
+CREATE INDEX IF NOT EXISTS strategy_access_grantee_idx
+    ON strategy_access (grantee_id, status);
+
 CREATE INDEX IF NOT EXISTS strategies_owner_idx    ON strategies (owner_id);
 CREATE INDEX IF NOT EXISTS backtest_runs_owner_idx ON backtest_runs (owner_id);

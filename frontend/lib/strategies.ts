@@ -58,6 +58,32 @@ export interface StrategyRecord {
   name: string;
   description: string | null;
   definition: StrategyDefinition;
+  /** Google account that owns the row. Null only for pre-auth legacy rows. */
+  owner_email: string | null;
+}
+
+// ── Sharing ───────────────────────────────────────────────────────
+
+export type AccessStatus = "pending" | "granted" | "denied" | "revoked";
+
+export interface AccessRow {
+  id: string;
+  status: AccessStatus;
+  message: string | null;
+  requested_at: string;
+  decided_at: string | null;
+  seen_at: string | null;
+  counterparty_email: string;
+  counterparty_name: string | null;
+  counterparty_picture: string | null;
+}
+
+export interface AccessOverview {
+  /** People asking to read my strategies. */
+  incoming: AccessRow[];
+  /** People I have asked to read. */
+  outgoing: AccessRow[];
+  pending_count: number;
 }
 
 export interface StrategyTrade {
@@ -152,6 +178,37 @@ export function updateStrategy(
 
 export function deleteStrategy(id: string): Promise<{ status: string }> {
   return request(`/api/v1/strategies/${id}`, { method: "DELETE" });
+}
+
+/** Duplicate a readable strategy into the caller's own account. */
+export function copyStrategy(id: string): Promise<StrategyRecord> {
+  return request(`/api/v1/strategies/${id}/copy`, { method: "POST" });
+}
+
+export function fetchAccess(): Promise<AccessOverview> {
+  return request("/api/v1/strategy-access");
+}
+
+export function requestAccess(email: string, message: string | null): Promise<AccessRow> {
+  return request("/api/v1/strategy-access/requests", {
+    method: "POST",
+    body: JSON.stringify({ email, message }),
+  });
+}
+
+export function decideAccess(
+  id: string,
+  status: "granted" | "denied" | "revoked",
+): Promise<{ status: string }> {
+  return request(`/api/v1/strategy-access/requests/${id}/decide`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+}
+
+/** Clears the pending badge without deciding anything. */
+export function markAccessSeen(): Promise<{ pending_count: number }> {
+  return request("/api/v1/strategy-access/seen", { method: "POST" });
 }
 
 export function evaluateStrategy(

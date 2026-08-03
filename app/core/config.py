@@ -77,6 +77,13 @@ class Settings(BaseSettings):
 
     # Notifications (optional — leave empty to disable)
     notify_webhook_url: str = ""
+    # Resend API key for sharing emails. Empty = in-app notification only;
+    # the send is logged and skipped rather than failing the request.
+    resend_api_key: str = ""
+    # Verified sender, e.g. "quant.futures <noreply@yourdomain.com>".
+    notify_from_email: str = ""
+    # Absolute base used to build links inside those emails.
+    frontend_base_url: str = "https://frontend-production-d637.up.railway.app"
 
     # Off-site backup to Cloudflare R2 (ADR-006). Empty credentials
     # disable the backup job rather than failing the fetcher.
