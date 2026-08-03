@@ -10,6 +10,7 @@
 import type {
   IChartApi,
   ISeriesApi,
+  SeriesType,
   ISeriesPrimitive,
   ISeriesPrimitivePaneRenderer,
   ISeriesPrimitivePaneView,
@@ -110,11 +111,13 @@ class BoxesPaneView implements ISeriesPrimitivePaneView {
 export class TradeBoxesPrimitive implements ISeriesPrimitive<Time> {
   boxes: TradeBox[] = [];
   chart: IChartApi | null = null;
-  series: ISeriesApi<"Candlestick"> | null = null;
+  // Any series type can own the overlay — the price chart swaps between
+  // candles, lines, areas and derived types.
+  series: ISeriesApi<SeriesType> | null = null;
 
   private readonly _view = new BoxesPaneView(this);
 
-  constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">) {
+  constructor(chart: IChartApi, series: ISeriesApi<SeriesType>) {
     this.chart = chart;
     this.series = series;
   }

@@ -1,20 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type SeriesMarker,
+  type SeriesType,
   type Time,
   type UTCTimestamp,
   createChart,
 } from "lightweight-charts";
 
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
+import {
+  CHART_KINDS,
+  GROUP_LABEL,
+  buildChart,
+  type ChartKind,
+  type SeriesBuild,
+} from "@/lib/chart-series";
 import { GOOGLE_CLIENT_ID, useAuth } from "@/lib/auth";
-import { fetchKBars } from "@/lib/api";
+import { fetchCoverage, fetchKBars } from "@/lib/api";
 import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
 import { evaluateStrategy, listStrategies } from "@/lib/strategies";
 import type { AssetClass, Instrument, KBar, Timeframe } from "@/lib/types";
@@ -34,6 +42,11 @@ interface Props {
 // Default lookback windows per timeframe, sized so the user gets a useful
 // number of candles on first load without overshooting the 50 000-bar API
 // cap. Numbers are calibrated against CME Globex session density.
+//
+// The window ends at the newest bar the backend actually holds, NOT at
+// wall-clock now. Anchoring to now produced an empty chart for every
+// instrument whenever the fetcher fell behind by more than the lookback —
+// at 1m (2 days) that was the whole instrument list within 48 hours.
 const DEFAULT_LOOKBACK_DAYS: Record<Timeframe, number> = {
   "1m": 2,
   "5m": 7,
@@ -46,6 +59,25 @@ const DEFAULT_LOOKBACK_DAYS: Record<Timeframe, number> = {
 
 function toUtcSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
+}
+
+/** Maps a build spec onto the matching lightweight-charts constructor. */
+function addSeries(chart: IChartApi, spec: SeriesBuild): ISeriesApi<SeriesType> {
+  const options = spec.options as never;
+  switch (spec.seriesKind) {
+    case "Candlestick":
+      return chart.addCandlestickSeries(options);
+    case "Bar":
+      return chart.addBarSeries(options);
+    case "Line":
+      return chart.addLineSeries(options);
+    case "Area":
+      return chart.addAreaSeries(options);
+    case "Baseline":
+      return chart.addBaselineSeries(options);
+    case "Histogram":
+      return chart.addHistogramSeries(options);
+  }
 }
 
 export function ChartView({ initialInstrument, initialTimeframe }: Props) {
@@ -66,18 +98,46 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const [evalError, setEvalError] = useState<string | null>(null);
   const [evalLoading, setEvalLoading] = useState(false);
 
+  const [chartKind, setChartKind] = useState<ChartKind>("candles");
+  const [buildNote, setBuildNote] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const priceRef = useRef<ISeriesApi<SeriesType> | null>(null);
+  const extraRef = useRef<ISeriesApi<SeriesType>[]>([]);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const boxesRef = useRef<TradeBoxesPrimitive | null>(null);
 
+  // Newest bar the backend holds for this instrument+timeframe. Null until
+  // coverage loads, and null for combos the backend has never ingested.
+  const [dataEnd, setDataEnd] = useState<Date | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataEnd(null);
+    fetchCoverage(instrument)
+      .then((rows) => {
+        if (cancelled) return;
+        const row = rows.find((r) => r.timeframe === timeframe);
+        setDataEnd(row?.latest_ts ? new Date(row.latest_ts) : null);
+      })
+      .catch(() => {
+        // Coverage is an optimisation; fall back to wall-clock below.
+        if (!cancelled) setDataEnd(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [instrument, timeframe]);
+
   const range = useMemo(() => {
-    const end = new Date();
+    const end = dataEnd ?? new Date();
     const start = new Date(end);
     start.setUTCDate(end.getUTCDate() - DEFAULT_LOOKBACK_DAYS[timeframe]);
-    return { start, end };
-  }, [timeframe]);
+    // Ask slightly past the last bar so the newest one is never clipped.
+    const paddedEnd = new Date(end.getTime() + 86_400_000);
+    return { start, end: paddedEnd };
+  }, [timeframe, dataEnd]);
 
   // Initialise the chart instance once and tear it down on unmount; resize
   // observation lives in the same effect so it registers exactly once.
@@ -97,14 +157,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       timeScale: { borderColor: "#262b36", timeVisible: true, secondsVisible: false },
       autoSize: true,
     });
-    const candles = chart.addCandlestickSeries({
-      upColor: "#26a69a",
-      downColor: "#ef5350",
-      borderUpColor: "#26a69a",
-      borderDownColor: "#ef5350",
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
-    });
+    // The price series is created by the rebuild effect below, because it
+    // depends on the selected chart type. Only the volume pane, which every
+    // type shares, is set up here.
     const volumes = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "",
@@ -113,16 +168,13 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     volumes.priceScale().applyOptions({
       scaleMargins: { top: 0.85, bottom: 0 },
     });
-    const boxes = new TradeBoxesPrimitive(chart, candles);
-    candles.attachPrimitive(boxes);
     chartRef.current = chart;
-    candleRef.current = candles;
     volumeRef.current = volumes;
-    boxesRef.current = boxes;
     return () => {
       chart.remove();
       chartRef.current = null;
-      candleRef.current = null;
+      priceRef.current = null;
+      extraRef.current = [];
       volumeRef.current = null;
       boxesRef.current = null;
     };
@@ -140,30 +192,36 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       .catch(() => setStrategies([]));
   }, [authed]);
 
-  const load = useCallback(async () => {
+  // Aborts the in-flight bar request when the selection changes. Without
+  // it, switching instruments quickly let a slower earlier response land
+  // last and overwrite the chart with the wrong instrument's bars — or
+  // blank it, if that earlier request was the one that failed.
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetchKBars({
+    fetchKBars(
+      {
         instrument,
         timeframe,
         start: range.start,
         end: range.end,
         adjustment: "ratio",
         limit: 50000,
+      },
+      { signal: controller.signal },
+    )
+      .then((res) => setBars(res.data))
+      .catch((e: unknown) => {
+        if (controller.signal.aborted) return; // superseded, not a failure
+        setError(e instanceof Error ? e.message : String(e));
+        setBars([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
       });
-      setBars(res.data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBars([]);
-    } finally {
-      setLoading(false);
-    }
+    return () => controller.abort();
   }, [instrument, timeframe, range]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   // Evaluate the selected strategy over the same instrument/range the
   // chart is showing. Selecting a strategy forces the chart onto the
@@ -216,37 +274,54 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     if (s && s.definition.timeframe !== t) setStrategyId("");
   }
 
-  // Re-render the chart series whenever a new bar set lands. Going through
-  // setData rather than incremental updates keeps the chart deterministic
-  // when the user toggles between instruments.
+  // Rebuild the price series whenever the bars or the chart type change.
+  // Recreating rather than mutating keeps every type on the same code path
+  // and avoids leftover options bleeding from the previous type.
   useEffect(() => {
-    if (!bars || !candleRef.current || !volumeRef.current || !chartRef.current) {
-      return;
+    const chart = chartRef.current;
+    if (!chart || !bars) return;
+
+    if (priceRef.current) chart.removeSeries(priceRef.current);
+    for (const s of extraRef.current) chart.removeSeries(s);
+    priceRef.current = null;
+    extraRef.current = [];
+    boxesRef.current = null;
+
+    const build = buildChart(chartKind, bars);
+    setBuildNote(build.note ?? null);
+
+    const created = build.series.map((spec) => {
+      const series = addSeries(chart, spec);
+      series.setData(spec.data as never[]);
+      return series;
+    });
+    priceRef.current = created[0] ?? null;
+    extraRef.current = created.slice(1);
+
+    if (priceRef.current) {
+      const boxes = new TradeBoxesPrimitive(chart, priceRef.current);
+      priceRef.current.attachPrimitive(boxes);
+      boxesRef.current = boxes;
     }
-    candleRef.current.setData(
-      bars.map((b) => ({
-        time: toUtcSeconds(b.ts),
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
+
+    // Derived types rewrite the x-axis, so per-bar volume no longer lines up.
+    volumeRef.current?.setData(
+      build.showVolume
+        ? bars.map((b) => ({
+            time: toUtcSeconds(b.ts),
+            value: b.volume,
+            color: b.close >= b.open ? "#26a69a55" : "#ef535055",
+          }))
+        : [],
     );
-    volumeRef.current.setData(
-      bars.map((b) => ({
-        time: toUtcSeconds(b.ts),
-        value: b.volume,
-        color: b.close >= b.open ? "#26a69a55" : "#ef535055",
-      })),
-    );
-    chartRef.current.timeScale().fitContent();
-  }, [bars]);
+    chart.timeScale().fitContent();
+  }, [bars, chartKind]);
 
   // Trade overlay: entry/exit markers + SL/TP position boxes.
   useEffect(() => {
-    if (!candleRef.current || !boxesRef.current) return;
+    if (!priceRef.current || !boxesRef.current) return;
     if (!evalResult) {
-      candleRef.current.setMarkers([]);
+      priceRef.current.setMarkers([]);
       boxesRef.current.setBoxes([]);
       return;
     }
@@ -295,7 +370,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       }
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
-    candleRef.current.setMarkers(markers);
+    priceRef.current.setMarkers(markers);
     boxesRef.current.setBoxes(boxes);
   }, [evalResult, bars]);
 
@@ -363,6 +438,23 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             </button>
           ))}
         </div>
+        <div className="h-5 w-px bg-border" />
+        <select
+          value={chartKind}
+          onChange={(e) => setChartKind(e.target.value as ChartKind)}
+          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none"
+          title="Chart type"
+        >
+          {(["bars", "lines", "areas", "columns", "derived"] as const).map((group) => (
+            <optgroup key={group} label={GROUP_LABEL[group]}>
+              {CHART_KINDS.filter((k) => k.group === group).map((k) => (
+                <option key={k.kind} value={k.kind}>
+                  {k.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         <div className="h-5 w-px bg-border" />
         <select
           value={strategyId}
@@ -448,10 +540,37 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         </div>
       )}
 
-      <div
-        ref={containerRef}
-        className="h-[560px] w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
-      />
+      {buildNote && (
+        <p className="rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-[11px] text-zinc-500">
+          {buildNote}
+        </p>
+      )}
+
+      <div className="relative">
+        <div
+          ref={containerRef}
+          className="h-[560px] w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
+        />
+        {/* A successful request that returns nothing used to render a blank
+            panel with no explanation. Say so instead. */}
+        {!loading && !error && bars !== null && bars.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center px-6 text-center">
+            <div>
+              <p className="font-mono text-sm text-zinc-300">
+                No {timeframe} bars for {instrument}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {dataEnd
+                  ? `The backend's newest ${timeframe} bar for this instrument is ${dataEnd
+                      .toISOString()
+                      .slice(0, 16)
+                      .replace("T", " ")}Z. Try another timeframe.`
+                  : "The backend has not ingested this instrument at this timeframe yet."}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

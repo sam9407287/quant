@@ -26,8 +26,8 @@ export default function ChartPage({ searchParams }: PageProps) {
       <header>
         <h1 className="text-2xl font-semibold">Chart</h1>
         <p className="mt-2 text-sm text-zinc-400">
-          Candlesticks at any of the seven supported timeframes. Pricing comes
-          straight from the <code>/api/v1/kbars</code> endpoint with
+          Sixteen chart types at any of the seven supported timeframes. Pricing
+          comes straight from the <code>/api/v1/kbars</code> endpoint with
           ratio-adjusted contract rolls applied server-side.
         </p>
       </header>
