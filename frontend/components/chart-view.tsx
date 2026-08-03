@@ -14,13 +14,8 @@ import {
 } from "lightweight-charts";
 
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
-import {
-  CHART_KINDS,
-  GROUP_LABEL,
-  buildChart,
-  type ChartKind,
-  type SeriesBuild,
-} from "@/lib/chart-series";
+import { ChartTypeMenu } from "@/components/chart/type-menu";
+import { buildChart, type ChartKind, type SeriesBuild } from "@/lib/chart-series";
 import { GOOGLE_CLIENT_ID, useAuth } from "@/lib/auth";
 import { fetchCoverage, fetchKBars } from "@/lib/api";
 import type { EvaluateResponse, StrategyRecord } from "@/lib/strategies";
@@ -108,22 +103,27 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const boxesRef = useRef<TradeBoxesPrimitive | null>(null);
 
-  // Newest bar the backend holds for this instrument+timeframe. Null until
-  // coverage loads, and null for combos the backend has never ingested.
-  const [dataEnd, setDataEnd] = useState<Date | null>(null);
+  // Newest bar the backend holds, tagged with the selection it belongs to.
+  // Bars are NOT fetched until this matches the current selection: firing a
+  // wall-clock-anchored request first and correcting it once coverage landed
+  // meant every switch issued a doomed request (an empty window, so zero
+  // bars) whose failure could overwrite the good response that followed.
+  const selectionKey = `${instrument}|${timeframe}`;
+  const [anchor, setAnchor] = useState<{ key: string; iso: string } | null>(null);
+  const anchorReady = anchor?.key === selectionKey;
 
   useEffect(() => {
     let cancelled = false;
-    setDataEnd(null);
     fetchCoverage(instrument)
       .then((rows) => {
         if (cancelled) return;
         const row = rows.find((r) => r.timeframe === timeframe);
-        setDataEnd(row?.latest_ts ? new Date(row.latest_ts) : null);
+        setAnchor({ key: `${instrument}|${timeframe}`, iso: row?.latest_ts ?? "" });
       })
       .catch(() => {
-        // Coverage is an optimisation; fall back to wall-clock below.
-        if (!cancelled) setDataEnd(null);
+        // Coverage is an optimisation — fall back to wall-clock, but still
+        // tag the selection so the bar fetch is unblocked.
+        if (!cancelled) setAnchor({ key: `${instrument}|${timeframe}`, iso: "" });
       });
     return () => {
       cancelled = true;
@@ -131,13 +131,13 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   }, [instrument, timeframe]);
 
   const range = useMemo(() => {
-    const end = dataEnd ?? new Date();
+    if (!anchorReady || !anchor) return null;
+    const end = anchor.iso ? new Date(anchor.iso) : new Date();
     const start = new Date(end);
     start.setUTCDate(end.getUTCDate() - DEFAULT_LOOKBACK_DAYS[timeframe]);
     // Ask slightly past the last bar so the newest one is never clipped.
-    const paddedEnd = new Date(end.getTime() + 86_400_000);
-    return { start, end: paddedEnd };
-  }, [timeframe, dataEnd]);
+    return { start, end: new Date(end.getTime() + 86_400_000) };
+  }, [anchorReady, anchor, timeframe]);
 
   // Initialise the chart instance once and tear it down on unmount; resize
   // observation lives in the same effect so it registers exactly once.
@@ -197,8 +197,10 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   // last and overwrite the chart with the wrong instrument's bars — or
   // blank it, if that earlier request was the one that failed.
   useEffect(() => {
-    const controller = new AbortController();
     setLoading(true);
+    if (!range) return; // waiting on coverage; nothing to request yet
+    const controller = new AbortController();
+    let superseded = false;
     setError(null);
     fetchKBars(
       {
@@ -211,23 +213,33 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       },
       { signal: controller.signal },
     )
-      .then((res) => setBars(res.data))
+      .then((res) => {
+        if (superseded) return;
+        setBars(res.data);
+      })
       .catch((e: unknown) => {
-        if (controller.signal.aborted) return; // superseded, not a failure
+        // `superseded` rather than signal.aborted alone: a cancelled request
+        // can reject with the server's own error (Railway logs an aborted
+        // request as 503) before the abort is observable here, and that
+        // stale rejection must never overwrite the newer request's state.
+        if (superseded || controller.signal.aborted) return;
         setError(e instanceof Error ? e.message : String(e));
         setBars([]);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!superseded) setLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      superseded = true;
+      controller.abort();
+    };
   }, [instrument, timeframe, range]);
 
   // Evaluate the selected strategy over the same instrument/range the
   // chart is showing. Selecting a strategy forces the chart onto the
   // strategy's timeframe, so bar times and trade times line up exactly.
   useEffect(() => {
-    if (!strategyId) {
+    if (!strategyId || !range) {
       setEvalResult(null);
       setEvalError(null);
       return;
@@ -439,22 +451,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           ))}
         </div>
         <div className="h-5 w-px bg-border" />
-        <select
-          value={chartKind}
-          onChange={(e) => setChartKind(e.target.value as ChartKind)}
-          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none"
-          title="Chart type"
-        >
-          {(["bars", "lines", "areas", "columns", "derived"] as const).map((group) => (
-            <optgroup key={group} label={GROUP_LABEL[group]}>
-              {CHART_KINDS.filter((k) => k.group === group).map((k) => (
-                <option key={k.kind} value={k.kind}>
-                  {k.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        <ChartTypeMenu value={chartKind} onChange={setChartKind} />
         <div className="h-5 w-px bg-border" />
         <select
           value={strategyId}
@@ -560,9 +557,8 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
                 No {timeframe} bars for {instrument}
               </p>
               <p className="mt-1 text-xs text-zinc-500">
-                {dataEnd
-                  ? `The backend's newest ${timeframe} bar for this instrument is ${dataEnd
-                      .toISOString()
+                {anchor?.iso
+                  ? `The backend's newest ${timeframe} bar for this instrument is ${anchor.iso
                       .slice(0, 16)
                       .replace("T", " ")}Z. Try another timeframe.`
                   : "The backend has not ingested this instrument at this timeframe yet."}
