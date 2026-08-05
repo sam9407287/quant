@@ -17,6 +17,7 @@ import {
 
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
 import { ChartTypeMenu } from "@/components/chart/type-menu";
+import { PriceScaleMenu, type ScaleMode } from "@/components/chart/price-scale-menu";
 import { InstrumentSearch } from "@/components/chart/instrument-search";
 import { TimeframeMenu } from "@/components/chart/timeframe-menu";
 import {
@@ -83,7 +84,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
   const [chartKind, setChartKind] = useState<ChartKind>("candles");
   const [buildNote, setBuildNote] = useState<string | null>(null);
-  const [scaleMode, setScaleMode] = useState<"normal" | "log" | "pct">("normal");
+  const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
   // Vertical zoom factor for the price axis; 1 = fit the data exactly.
   const priceZoomRef = useRef(1);
 
@@ -219,14 +220,20 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       if (!chart) return;
       const rect = el.getBoundingClientRect();
       const axisWidth = chart.priceScale("right").width();
-      if (e.clientX < rect.right - axisWidth) return; // not over the axis
+      // Over the plot: leave it alone, the library's own horizontal (time)
+      // zoom is what should happen there.
+      if (e.clientX < rect.right - axisWidth) return;
+      // Over the axis: price only. Stopping propagation in the capture
+      // phase is what keeps lightweight-charts from also zooming time —
+      // preventDefault alone still let both fire.
       e.preventDefault();
+      e.stopPropagation();
       const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
       priceZoomRef.current = Math.min(20, Math.max(0.2, priceZoomRef.current * factor));
       refreshPriceZoom();
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
   }, []);
 
   // Saved strategies for the overlay picker (only once signed in).
@@ -446,46 +453,6 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
         <div className="h-5 w-px bg-border" />
 
-        {/* Price-axis scale. Percentage is the same axis expressed as a
-            move from the first visible bar, which is why it sits here. */}
-        <div className="flex rounded-md border border-border bg-bg-hover p-0.5">
-          {(
-            [
-              ["normal", "Lin", "Arithmetic scale"],
-              ["log", "Log", "Logarithmic scale"],
-              ["pct", "%", "Percentage scale"],
-            ] as const
-          ).map(([mode, label, title]) => (
-            <button
-              key={mode}
-              type="button"
-              title={title}
-              onClick={() => setScaleMode(mode)}
-              className={`rounded px-2 py-1 font-mono text-[11px] transition ${
-                scaleMode === mode
-                  ? "bg-accent-blue/20 text-accent-blue"
-                  : "text-zinc-500 hover:text-zinc-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          title="Reset the price-axis zoom"
-          onClick={() => {
-            priceZoomRef.current = 1;
-            refreshPriceZoom();
-          }}
-          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-[11px] text-zinc-500 transition hover:text-zinc-100"
-        >
-          Fit
-        </button>
-
-        <div className="h-5 w-px bg-border" />
-
         <select
           value={strategyId}
           onChange={(e) => selectStrategy(e.target.value)}
@@ -578,6 +545,14 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         <div
           ref={containerRef}
           className="h-[560px] w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
+        />
+        <PriceScaleMenu
+          mode={scaleMode}
+          onMode={setScaleMode}
+          onFit={() => {
+            priceZoomRef.current = 1;
+            refreshPriceZoom();
+          }}
         />
         {/* A successful request that returns nothing used to render a blank
             panel with no explanation. Say so instead. */}
