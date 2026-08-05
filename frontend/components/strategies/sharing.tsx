@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import { ACCESS_SEEN_EVENT } from "@/components/strategies/pending-badge";
 import {
   decideAccess,
   fetchAccess,
@@ -71,6 +72,7 @@ export function SharingPanel({ onChanged }: { onChanged: () => void }) {
       // Seeing the list is what clears the badge; the requests stay pending.
       if (next.pending_count > 0) {
         await markAccessSeen();
+        window.dispatchEvent(new Event(ACCESS_SEEN_EVENT));
         onChanged();
       }
     } catch (e) {

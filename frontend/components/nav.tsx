@@ -1,15 +1,16 @@
 import Link from "next/link";
 
 import { AuthButton } from "@/components/auth/sign-in";
+import { PendingBadge } from "@/components/strategies/pending-badge";
 
-const links = [
+const links: { href: string; label: string; badge?: boolean }[] = [
   { href: "/", label: "Dashboard" },
   { href: "/coverage", label: "Coverage" },
   { href: "/chart", label: "Chart" },
   { href: "/research", label: "Research" },
   { href: "/research/experiments", label: "Experiments" },
   { href: "/research/backtest", label: "Backtest" },
-  { href: "/research/strategies", label: "Strategies" },
+  { href: "/research/strategies", label: "Strategies", badge: true },
   { href: "/research/signal-test", label: "Signal Test" },
 ];
 
@@ -25,9 +26,10 @@ export function Nav() {
             <Link
               key={l.href}
               href={l.href}
-              className="rounded-md px-3 py-1.5 text-zinc-400 transition hover:bg-bg-hover hover:text-zinc-100"
+              className="flex items-center rounded-md px-3 py-1.5 text-zinc-400 transition hover:bg-bg-hover hover:text-zinc-100"
             >
               {l.label}
+              {l.badge && <PendingBadge />}
             </Link>
           ))}
         </nav>
