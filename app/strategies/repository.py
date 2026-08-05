@@ -22,8 +22,12 @@ _OWNER_COND = "AND (CAST(:owner AS UUID) IS NULL OR s.owner_id = CAST(:owner AS 
 # granted them access. NULL still means "see everything" (admins). The set
 # arrives as a comma-joined string because a bare text() param cannot carry
 # a UUID array across both drivers.
+# Every use of :owners is cast explicitly. asyncpg infers a parameter's type
+# from its context, and a bare `:owners IS NULL` gives it nothing to work
+# with — it raises AmbiguousParameterError rather than assuming text.
 _READ_COND = (
-    "AND (:owners IS NULL OR s.owner_id = ANY(string_to_array(:owners, ',')::UUID[]))"
+    "AND (CAST(:owners AS TEXT) IS NULL "
+    "OR s.owner_id = ANY(string_to_array(CAST(:owners AS TEXT), ',')::UUID[]))"
 )
 
 
