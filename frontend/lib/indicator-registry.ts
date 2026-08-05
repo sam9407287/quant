@@ -301,6 +301,8 @@ export interface ActiveIndicator {
   uid: string;
   id: string;
   params: Record<string, number>;
+  /** Hidden indicators stay in the list but draw nothing. */
+  hidden?: boolean;
 }
 
 export function defaultParams(meta: IndicatorMeta): Record<string, number> {

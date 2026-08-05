@@ -20,6 +20,8 @@ import { ChartTypeMenu } from "@/components/chart/type-menu";
 import { PriceScaleMenu, type ScaleMode } from "@/components/chart/price-scale-menu";
 import { IndicatorModal } from "@/components/chart/indicator-modal";
 import { OscillatorPane } from "@/components/chart/oscillator-pane";
+import { IndicatorLegendRow } from "@/components/chart/indicator-legend";
+import { IndicatorSettings } from "@/components/chart/indicator-settings";
 import {
   defaultParams,
   findIndicator,
@@ -104,6 +106,11 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
   const [indicators, setIndicators] = useState<ActiveIndicator[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [settingsUid, setSettingsUid] = useState<string | null>(null);
+  const toggleIndicator = (uid: string) =>
+    setIndicators((list) => list.map((x) => (x.uid === uid ? { ...x, hidden: !x.hidden } : x)));
+  const removeIndicator = (uid: string) =>
+    setIndicators((list) => list.filter((x) => x.uid !== uid));
   const oscillators = indicators.filter((a) => findIndicator(a.id)?.pane === "oscillator");
   const overlays = indicators.filter((a) => findIndicator(a.id)?.pane === "price");
   // Vertical zoom factor for the price axis; 1 = fit the data exactly.
@@ -422,6 +429,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     overlayRef.current = [];
     if (!bars) return;
     for (const active of overlays) {
+      if (active.hidden) continue;
       const meta = findIndicator(active.id);
       if (!meta) continue;
       for (const line of meta.build(bars, active.params)) {
@@ -534,126 +542,19 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         </div>
       </div>
 
-      {evalError && (
-        <div className="rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-sm text-accent-red">
-          <span className="font-mono">{evalError}</span>
-        </div>
-      )}
-
-      {evalResult && (
-        <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border border-border bg-bg-panel px-4 py-2 font-mono text-xs text-zinc-400">
-          <span>
-            trades <span className="text-zinc-100">{evalResult.metrics.trade_count}</span>
-          </span>
-          <span>
-            win rate{" "}
-            <span className="text-zinc-100">
-              {(evalResult.metrics.win_rate * 100).toFixed(1)}%
-            </span>
-          </span>
-          <span>
-            PF{" "}
-            <span className="text-zinc-100">
-              {evalResult.metrics.profit_factor?.toFixed(2) ?? "—"}
-            </span>
-          </span>
-          <span>
-            total{" "}
-            <span
-              className={
-                evalResult.metrics.total_pnl_points >= 0
-                  ? "text-accent-green"
-                  : "text-accent-red"
-              }
-            >
-              {evalResult.metrics.total_pnl_points.toFixed(1)} pts
-            </span>
-          </span>
-          <span>
-            maxDD{" "}
-            <span className="text-accent-red">
-              {evalResult.metrics.max_drawdown_points.toFixed(1)} pts
-            </span>
-          </span>
-          <span>
-            expectancy{" "}
-            <span className="text-zinc-100">
-              {evalResult.metrics.expectancy_points.toFixed(2)} pts
-            </span>
-          </span>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-sm text-accent-red">
-          <span className="font-mono">{error}</span>
-        </div>
-      )}
-
-      {buildNote && (
-        <p className="rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-[11px] text-zinc-500">
-          {buildNote}
-        </p>
-      )}
-
-      {(indicators.length > 0 || strategyId) && (
+      {strategyId && (
         <div className="flex flex-wrap items-center gap-1.5">
-          {strategyId && (
-            <span className="flex items-center gap-1.5 rounded-md border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[11px] text-accent-blue">
-              {strategies.find((s) => s.id === strategyId)?.name ?? "strategy"}
-              <button
-                type="button"
-                onClick={() => selectStrategy("")}
-                aria-label="Remove strategy overlay"
-                className="text-accent-blue/60 transition hover:text-accent-blue"
-              >
-                ✕
-              </button>
-            </span>
-          )}
-          {indicators.map((active) => {
-            const meta = findIndicator(active.id);
-            if (!meta) return null;
-            return (
-              <span
-                key={active.uid}
-                className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-2 py-1 text-[11px] text-zinc-300"
-              >
-                <span>{meta.name}</span>
-                {meta.params.map((param) => (
-                  <input
-                    key={param.key}
-                    type="number"
-                    min={param.min}
-                    max={param.max}
-                    step={param.step ?? 1}
-                    value={active.params[param.key]}
-                    title={param.label}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
-                      if (!Number.isFinite(next) || next < param.min || next > param.max) return;
-                      setIndicators((list) =>
-                        list.map((x) =>
-                          x.uid === active.uid
-                            ? { ...x, params: { ...x.params, [param.key]: next } }
-                            : x,
-                        ),
-                      );
-                    }}
-                    className="w-12 rounded border border-border bg-bg-hover px-1 py-0.5 text-center font-mono text-[11px] text-zinc-100 focus:border-accent-blue focus:outline-none"
-                  />
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setIndicators((list) => list.filter((x) => x.uid !== active.uid))}
-                  aria-label={`Remove ${meta.name}`}
-                  className="text-zinc-600 transition hover:text-accent-red"
-                >
-                  ✕
-                </button>
-              </span>
-            );
-          })}
+          <span className="flex items-center gap-1.5 rounded-md border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[11px] text-accent-blue">
+            {strategies.find((s) => s.id === strategyId)?.name ?? "strategy"}
+            <button
+              type="button"
+              onClick={() => selectStrategy("")}
+              aria-label="Remove strategy overlay"
+              className="text-accent-blue/60 transition hover:text-accent-blue"
+            >
+              ✕
+            </button>
+          </span>
         </div>
       )}
 
@@ -662,6 +563,18 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           ref={containerRef}
           className="h-[560px] w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
         />
+        <div className="pointer-events-none absolute left-2 top-2 z-10 flex flex-col items-start gap-0.5">
+          {overlays.map((active) => (
+            <IndicatorLegendRow
+              key={active.uid}
+              active={active}
+              onToggle={() => toggleIndicator(active.uid)}
+              onSettings={() => setSettingsUid(active.uid)}
+              onRemove={() => removeIndicator(active.uid)}
+            />
+          ))}
+        </div>
+
         <PriceScaleMenu
           mode={scaleMode}
           onMode={setScaleMode}
@@ -696,9 +609,21 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           bars={bars}
           active={active}
           getMainChart={getMainChart}
-          onRemove={() => setIndicators((list) => list.filter((x) => x.uid !== active.uid))}
+          onRemove={() => removeIndicator(active.uid)}
+          onToggle={() => toggleIndicator(active.uid)}
+          onSettings={() => setSettingsUid(active.uid)}
         />
       ))}
+
+      <IndicatorSettings
+        active={indicators.find((x) => x.uid === settingsUid) ?? null}
+        onClose={() => setSettingsUid(null)}
+        onApply={(params) =>
+          setIndicators((list) =>
+            list.map((x) => (x.uid === settingsUid ? { ...x, params } : x)),
+          )
+        }
+      />
 
       <IndicatorModal
         open={pickerOpen}

@@ -20,6 +20,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 
+import { IndicatorLegendRow } from "@/components/chart/indicator-legend";
 import { findIndicator, type ActiveIndicator } from "@/lib/indicator-registry";
 import type { KBar } from "@/lib/types";
 
@@ -32,11 +33,15 @@ export function OscillatorPane({
   active,
   getMainChart,
   onRemove,
+  onToggle,
+  onSettings,
 }: {
   bars: KBar[] | null;
   active: ActiveIndicator;
   getMainChart: () => IChartApi | null;
   onRemove: () => void;
+  onToggle: () => void;
+  onSettings: () => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -67,7 +72,7 @@ export function OscillatorPane({
     if (!chart || !meta) return;
     for (const s of seriesRef.current) chart.removeSeries(s);
     seriesRef.current = [];
-    if (!bars?.length) return;
+    if (!bars?.length || active.hidden) return;
 
     // Indicator lines skip their warm-up bars, so on their own this pane
     // would span fewer points than the price chart and the two logical
@@ -150,20 +155,14 @@ export function OscillatorPane({
         ref={boxRef}
         className="h-[150px] w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
       />
-      <div className="pointer-events-none absolute left-3 top-2 flex items-center gap-2 font-mono text-[11px]">
-        <span className="rounded bg-bg-panel/80 px-1.5 py-0.5 text-zinc-300 backdrop-blur">
-          {meta.name}
-          {meta.params.length > 0 && ` ${meta.params.map((x) => active.params[x.key]).join(", ")}`}
-        </span>
+      <div className="absolute left-2 top-2 z-10">
+        <IndicatorLegendRow
+          active={active}
+          onToggle={onToggle}
+          onSettings={onSettings}
+          onRemove={onRemove}
+        />
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${meta.name}`}
-        className="absolute right-2 top-2 rounded bg-bg-panel/80 px-1.5 text-zinc-600 backdrop-blur transition hover:text-accent-red"
-      >
-        ✕
-      </button>
     </div>
   );
 }
