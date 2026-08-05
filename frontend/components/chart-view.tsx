@@ -18,6 +18,13 @@ import {
 import { TradeBoxesPrimitive, type TradeBox } from "@/components/chart/trade-overlay";
 import { ChartTypeMenu } from "@/components/chart/type-menu";
 import { PriceScaleMenu, type ScaleMode } from "@/components/chart/price-scale-menu";
+import { IndicatorModal } from "@/components/chart/indicator-modal";
+import { OscillatorPane } from "@/components/chart/oscillator-pane";
+import {
+  defaultParams,
+  findIndicator,
+  type ActiveIndicator,
+} from "@/lib/indicator-registry";
 import { InstrumentSearch } from "@/components/chart/instrument-search";
 import { TimeframeMenu } from "@/components/chart/timeframe-menu";
 import {
@@ -63,6 +70,16 @@ function addSeries(chart: IChartApi, spec: SeriesBuild): ISeriesApi<SeriesType> 
   }
 }
 
+/** Indicator values are bar-aligned with nulls for the warm-up window. */
+function toLineData(bars: KBar[], values: (number | null)[]) {
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  for (let i = 0; i < bars.length; i++) {
+    const v = values[i];
+    if (v !== null && Number.isFinite(v)) out.push({ time: toUtcSeconds(bars[i].ts), value: v });
+  }
+  return out;
+}
+
 export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const { user } = useAuth();
   const authed = !GOOGLE_CLIENT_ID || user !== null;
@@ -85,6 +102,10 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const [chartKind, setChartKind] = useState<ChartKind>("candles");
   const [buildNote, setBuildNote] = useState<string | null>(null);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
+  const [indicators, setIndicators] = useState<ActiveIndicator[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const oscillators = indicators.filter((a) => findIndicator(a.id)?.pane === "oscillator");
+  const overlays = indicators.filter((a) => findIndicator(a.id)?.pane === "price");
   // Vertical zoom factor for the price axis; 1 = fit the data exactly.
   const priceZoomRef = useRef(1);
 
@@ -94,6 +115,10 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const extraRef = useRef<ISeriesApi<SeriesType>[]>([]);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const boxesRef = useRef<TradeBoxesPrimitive | null>(null);
+  const overlayRef = useRef<ISeriesApi<SeriesType>[]>([]);
+  // Panes read the price chart through a getter so they never hold a stale
+  // reference across a remount.
+  const getMainChart = useCallback(() => chartRef.current, []);
 
   // Newest bar the backend holds, tagged with the selection it belongs to.
   // Bars are NOT fetched until this matches the current selection: firing a
@@ -387,6 +412,33 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     chart.timeScale().fitContent();
   }, [bars, chartKind, zoomProvider]);
 
+  // Price-pane overlays. Rebuilt wholesale whenever the bars or the active
+  // set change — cheaper to reason about than diffing, and these are a
+  // handful of line series.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    for (const s of overlayRef.current) chart.removeSeries(s);
+    overlayRef.current = [];
+    if (!bars) return;
+    for (const active of overlays) {
+      const meta = findIndicator(active.id);
+      if (!meta) continue;
+      for (const line of meta.build(bars, active.params)) {
+        const series = chart.addLineSeries({
+          color: line.color,
+          lineWidth: (line.lineWidth ?? 1) as 1 | 2 | 3 | 4,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        series.setData(toLineData(bars, line.values));
+        overlayRef.current.push(series);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bars, indicators, chartKind]);
+
   // Trade overlay: entry/exit markers + SL/TP position boxes.
   useEffect(() => {
     if (!priceRef.current || !boxesRef.current) return;
@@ -451,22 +503,25 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         <TimeframeMenu value={interval} onChange={selectInterval} />
         <ChartTypeMenu value={chartKind} onChange={setChartKind} />
 
-        <div className="h-5 w-px bg-border" />
-
-        <select
-          value={strategyId}
-          onChange={(e) => selectStrategy(e.target.value)}
-          disabled={!authed}
-          className="rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 focus:border-accent-blue focus:outline-none disabled:opacity-50"
-          title={authed ? "Overlay a saved strategy" : "Sign in to overlay your strategies"}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          title="Indicators & strategies"
+          className="flex items-center gap-2 rounded-md border border-border bg-bg-hover px-2 py-1.5 font-mono text-xs text-zinc-200 transition hover:text-white focus:border-accent-blue focus:outline-none"
         >
-          <option value="">{authed ? "No strategy" : "Sign in for strategies"}</option>
-          {strategies.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.definition.timeframe})
-            </option>
-          ))}
-        </select>
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+            <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 20h16" />
+              <path d="M4 16l4-5 4 3 4-7 4 4" />
+            </g>
+          </svg>
+          Indicators
+          {(indicators.length > 0 || strategyId) && (
+            <span className="rounded bg-accent-blue/20 px-1 font-mono text-[10px] text-accent-blue">
+              {indicators.length + (strategyId ? 1 : 0)}
+            </span>
+          )}
+        </button>
 
         <div className="ml-auto flex items-center gap-3 text-xs text-zinc-500">
           <span>
@@ -541,6 +596,67 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         </p>
       )}
 
+      {(indicators.length > 0 || strategyId) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {strategyId && (
+            <span className="flex items-center gap-1.5 rounded-md border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[11px] text-accent-blue">
+              {strategies.find((s) => s.id === strategyId)?.name ?? "strategy"}
+              <button
+                type="button"
+                onClick={() => selectStrategy("")}
+                aria-label="Remove strategy overlay"
+                className="text-accent-blue/60 transition hover:text-accent-blue"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+          {indicators.map((active) => {
+            const meta = findIndicator(active.id);
+            if (!meta) return null;
+            return (
+              <span
+                key={active.uid}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-2 py-1 text-[11px] text-zinc-300"
+              >
+                <span>{meta.name}</span>
+                {meta.params.map((param) => (
+                  <input
+                    key={param.key}
+                    type="number"
+                    min={param.min}
+                    max={param.max}
+                    step={param.step ?? 1}
+                    value={active.params[param.key]}
+                    title={param.label}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      if (!Number.isFinite(next) || next < param.min || next > param.max) return;
+                      setIndicators((list) =>
+                        list.map((x) =>
+                          x.uid === active.uid
+                            ? { ...x, params: { ...x.params, [param.key]: next } }
+                            : x,
+                        ),
+                      );
+                    }}
+                    className="w-12 rounded border border-border bg-bg-hover px-1 py-0.5 text-center font-mono text-[11px] text-zinc-100 focus:border-accent-blue focus:outline-none"
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setIndicators((list) => list.filter((x) => x.uid !== active.uid))}
+                  aria-label={`Remove ${meta.name}`}
+                  className="text-zinc-600 transition hover:text-accent-red"
+                >
+                  ✕
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       <div className="relative">
         <div
           ref={containerRef}
@@ -573,6 +689,34 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           </div>
         )}
       </div>
+
+      {oscillators.map((active) => (
+        <OscillatorPane
+          key={active.uid}
+          bars={bars}
+          active={active}
+          getMainChart={getMainChart}
+          onRemove={() => setIndicators((list) => list.filter((x) => x.uid !== active.uid))}
+        />
+      ))}
+
+      <IndicatorModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onAddIndicator={(id) => {
+          const meta = findIndicator(id);
+          if (!meta) return;
+          setIndicators((list) => [
+            ...list,
+            // uid keeps two copies of the same indicator independent.
+            { uid: `${id}-${list.length}-${meta.params.map((x) => x.value).join("_")}`, id, params: defaultParams(meta) },
+          ]);
+        }}
+        strategies={strategies}
+        strategyId={strategyId}
+        onSelectStrategy={selectStrategy}
+        authed={authed}
+      />
     </div>
   );
 }
