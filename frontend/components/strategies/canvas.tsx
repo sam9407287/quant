@@ -134,6 +134,84 @@ function defaultModule(kind: ModuleKind, role: Role = "entry_long"): ModuleState
   return { kind: "bracket", slMode: "points", slValue: 10, tpMode: "points", tpValue: 20 };
 }
 
+// ── Presets ───────────────────────────────────────────────────────
+//
+// A blank canvas with one lone module teaches nothing. Each preset is a
+// complete, readable strategy of a recognisable kind, so the first thing
+// a user sees is what a finished one looks like — then they edit it.
+// Brackets are in percent so a preset means the same thing on any
+// instrument, whatever a point is worth there.
+
+function rule(role: Role, op: ConditionOp, left: OperandState, right: OperandState): RuleState {
+  return { kind: "rule", role, op, left, right };
+}
+const oper = (kind: OperandKind, window = 20, extra: Partial<OperandState> = {}): OperandState => ({
+  ...DEFAULT_OPERAND, kind, window, ...extra,
+});
+
+const PRESETS: { key: string; label: string; timeframe: Timeframe; modules: ModuleState[] }[] = [
+  {
+    key: "ema_cross",
+    label: "EMA crossover (trend)",
+    timeframe: "1h",
+    modules: [
+      rule("entry_long", "cross_above", oper("ema", 20), oper("ema", 60)),
+      rule("exit_long", "cross_below", oper("ema", 20), oper("ema", 60)),
+      { kind: "bracket", slMode: "pct", slValue: 1, tpMode: "pct", tpValue: 2 },
+    ],
+  },
+  {
+    key: "mean_reversion",
+    label: "Mean reversion (Bollinger)",
+    timeframe: "1h",
+    modules: [
+      // Buy the stretch below the lower band, leave when price is back at
+      // the mean. The RSI filter keeps it from buying a strong downtrend
+      // that simply keeps going.
+      rule("entry_long", "cross_below", oper("price"), oper("bollinger_lower", 20, { value: 2 })),
+      rule("exit_long", "cross_above", oper("price"), oper("sma", 20)),
+      rule("filter", "lt", oper("rsi", 14), oper("const", 14, { value: 40 })),
+      { kind: "bracket", slMode: "pct", slValue: 1, tpMode: "pct", tpValue: 2 },
+    ],
+  },
+  {
+    key: "ict_killzone",
+    label: "ICT killzone (session OCO)",
+    timeframe: "5m",
+    modules: [
+      defaultModule("session"),
+      defaultModule("killzone"),
+      { kind: "bracket", slMode: "points", slValue: 10, tpMode: "points", tpValue: 20 },
+    ],
+  },
+];
+
+/** Grid wide enough that a module (288px) never covers the one before it. */
+const gridPosition = (i: number) => ({
+  x: 40 + (i % 3) * 320,
+  y: 40 + Math.floor(i / 3) * 300,
+});
+
+// Ids are never reused, not even across a preset swap. Reusing "m1" for a
+// module of a different kind lets React reconcile the old node component
+// onto the new params for a frame, which is how a RuleNode ends up holding
+// a Session and crashing on a field it does not have.
+let idSeq = 0;
+const newId = () => `m${++idSeq}`;
+
+/** Module list → the two parallel structures the canvas keeps (params + nodes). */
+function materialise(list: ModuleState[]) {
+  const modules: Record<string, ModuleState> = {};
+  const nodes: Node[] = list.map((m, i) => {
+    const id = newId();
+    modules[id] = m;
+    return { id, type: m.kind, position: gridPosition(i), data: {} };
+  });
+  return { modules, nodes };
+}
+
+const INITIAL = materialise(PRESETS[0].modules);
+
 const TIMEZONES = [
   "America/New_York",
   "America/Chicago",
@@ -332,14 +410,22 @@ function OperandFields({
 // a module that is not on the canvas yet, so the id lookup finds nothing.
 type NodeProps<T> = { id: string; preview?: T };
 
-function useModule<T extends ModuleState>(id: string, preview?: T): T | null {
+/**
+ * The module behind a node, or null.
+ *
+ * The `kind` check is load-bearing, not defensive noise: React can hand a
+ * node component params of another kind mid-reconcile, and rendering a
+ * Session through RuleNode reads fields that are not there.
+ */
+function useModule<T extends ModuleState>(id: string, kind: T["kind"], preview?: T): T | null {
   const { modules } = useCanvas();
-  return (preview ?? (modules[id] as T | undefined)) ?? null;
+  const m = preview ?? modules[id];
+  return m && m.kind === kind ? (m as T) : null;
 }
 
 function RuleNode({ id, preview }: NodeProps<RuleState>) {
   const { setModule } = useCanvas();
-  const r = useModule<RuleState>(id, preview);
+  const r = useModule<RuleState>(id, "rule", preview);
   if (!r) return null;
   const isFilter = r.role === "filter";
   return (
@@ -380,7 +466,7 @@ function RuleNode({ id, preview }: NodeProps<RuleState>) {
 
 function SessionNode({ id, preview }: NodeProps<SessionState>) {
   const { setModule } = useCanvas();
-  const s = useModule<SessionState>(id, preview);
+  const s = useModule<SessionState>(id, "session", preview);
   if (!s) return null;
   return (
     <Shell
@@ -416,7 +502,7 @@ function SessionNode({ id, preview }: NodeProps<SessionState>) {
 
 function KillzoneNode({ id, preview }: NodeProps<KillzoneState>) {
   const { setModule } = useCanvas();
-  const k = useModule<KillzoneState>(id, preview);
+  const k = useModule<KillzoneState>(id, "killzone", preview);
   if (!k) return null;
   return (
     <Shell
@@ -470,7 +556,7 @@ function KillzoneNode({ id, preview }: NodeProps<KillzoneState>) {
 
 function BracketNode({ id, preview }: NodeProps<BracketState>) {
   const { setModule } = useCanvas();
-  const b = useModule<BracketState>(id, preview);
+  const b = useModule<BracketState>(id, "bracket", preview);
   if (!b) return null;
   const pair = (
     valueKey: "slValue" | "tpValue",
@@ -529,22 +615,19 @@ const PALETTE: { key: string; label: string; kind: ModuleKind; role: Role }[] = 
   { key: "bracket", label: "Bracket", kind: "bracket", role: "entry_long" },
 ];
 
-const INITIAL_NODES: Node[] = [{ id: "m1", type: "rule", position: { x: 40, y: 40 }, data: {} }];
-
 // ── Canvas component ──────────────────────────────────────────────
 
 export function StrategyCanvas() {
-  const [modules, setModules] = useState<Record<string, ModuleState>>({
-    m1: defaultRule("entry_long"),
-  });
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL_NODES);
+  const [modules, setModules] = useState<Record<string, ModuleState>>(INITIAL.modules);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const seq = useRef(2);
-  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
+  const [timeframe, setTimeframe] = useState<Timeframe>(PRESETS[0].timeframe);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Transient explanation for an action the canvas declined to take.
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Edges here are annotation, not wiring: each module carries its own role
   // and params, so the compiled StrategyDefinition does not read the graph.
@@ -561,6 +644,7 @@ export function StrategyCanvas() {
 
   const removeModule = useCallback(
     (id: string) => {
+      setNotice(null);
       setNodes((ns) => ns.filter((n) => n.id !== id));
       setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
       setModules((ms) => Object.fromEntries(Object.entries(ms).filter(([k]) => k !== id)));
@@ -582,6 +666,39 @@ export function StrategyCanvas() {
   // dropped module lands under the cursor regardless of pan and zoom.
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
 
+  // Bumped whenever the whole canvas is replaced, to refit the viewport.
+  //
+  // Two frames, not one. React Flow sizes nodes with a ResizeObserver, and
+  // those callbacks are delivered after the frame's rAF callbacks — so a
+  // fit scheduled in the effect, or in a single rAF, measures nodes that
+  // are still zero-sized and zooms hard into the corner instead of out.
+  const [fitKey, setFitKey] = useState(0);
+  useEffect(() => {
+    if (!fitKey || !flow) return;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => flow.fitView({ padding: 0.15, duration: 300 }));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [fitKey, flow]);
+
+  const loadPreset = useCallback(
+    (key: string) => {
+      const preset = PRESETS.find((p) => p.key === key);
+      if (!preset) return;
+      const next = materialise(preset.modules);
+      setModules(next.modules);
+      setNodes(next.nodes);
+      setEdges([]);
+      setTimeframe(preset.timeframe);
+      setFitKey((n) => n + 1);
+    },
+    [setNodes, setEdges],
+  );
+
   // Hovering a palette entry floats a translucent copy of the module under
   // the cursor, so what you are about to place is visible before committing
   // to the drag.
@@ -598,17 +715,16 @@ export function StrategyCanvas() {
 
   const addModule = useCallback(
     (kind: ModuleKind, role: Role, position?: { x: number; y: number }) => {
-      const id = `m${seq.current++}`;
+      const id = newId();
       setModules((ms) => ({ ...ms, [id]: defaultModule(kind, role) }));
       setNodes((ns) => [
         ...ns,
         {
           id,
           type: kind,
-          // Clicked modules tile on a grid wider than a module (288px) and
-          // taller than the tallest one, so a click never buries the module
-          // added before it. Dropped ones land wherever the cursor was.
-          position: position ?? { x: 40 + (ns.length % 3) * 320, y: 40 + Math.floor(ns.length / 3) * 300 },
+          // Clicked modules tile on the grid so a click never buries the
+          // module added before it. Dropped ones land under the cursor.
+          position: position ?? gridPosition(ns.length),
           data: {},
         },
       ]);
@@ -619,7 +735,14 @@ export function StrategyCanvas() {
   /** Placing a Killzone brings its Session along — the pair is the setup. */
   const place = useCallback(
     (kind: ModuleKind, role: Role, position?: { x: number; y: number }) => {
-      if (SINGLETONS.includes(kind) && present(kind)) return;
+      // Refusing a duplicate has to say so. Dropping a second Session and
+      // watching nothing happen is indistinguishable from a broken canvas.
+      if (SINGLETONS.includes(kind) && present(kind)) {
+        const label = PALETTE.find((p) => p.kind === kind)?.label ?? kind;
+        setNotice(`${label} is already in this strategy — a strategy holds one.`);
+        return;
+      }
+      setNotice(null);
       if (kind === "killzone" && !present("session")) {
         addModule("session", role, position && { x: position.x - 300, y: position.y });
       }
@@ -735,18 +858,38 @@ export function StrategyCanvas() {
   return (
     <Ctx.Provider value={state}>
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-panel p-2">
+        <select
+          className={FIELD}
+          value=""
+          title="Replaces every module on the canvas"
+          onChange={(e) => {
+            loadPreset(e.target.value);
+            e.target.value = "";  // stays a verb, not a remembered selection
+          }}
+        >
+          <option value="" disabled>
+            Load preset…
+          </option>
+          {PRESETS.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <div className="mx-1 h-4 w-px bg-border" />
         <span className="px-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">Add module</span>
         {PALETTE.map(({ key, label, kind, role }) => {
+          // A strategy holds one session, one stop entry and one bracket, so
+          // those three cannot be added twice. The button says "added" and
+          // still previews on hover — dimming it silently read as broken.
           const taken = SINGLETONS.includes(kind) && present(kind);
           return (
             <button
               key={key}
               type="button"
               draggable={!taken}
-              disabled={taken}
-              title={taken ? `Only one ${label} module per strategy` : undefined}
+              title={taken ? `${label} is already in this strategy — a strategy holds one` : undefined}
               onMouseEnter={(e) => {
-                if (taken) return;
                 setCursor({ x: e.clientX, y: e.clientY });
                 setHover({ kind, role });
               }}
@@ -758,9 +901,13 @@ export function StrategyCanvas() {
               }}
               onDragEnd={() => setHover(null)}
               onClick={() => place(kind, role)}
-              className={`${TOOLBTN} cursor-grab active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-30`}
+              className={`${TOOLBTN} ${
+                taken
+                  ? "cursor-default text-zinc-600 ring-1 ring-inset ring-border"
+                  : "cursor-grab active:cursor-grabbing"
+              }`}
             >
-              + {label}
+              {taken ? "✓" : "+"} {label}
             </button>
           );
         })}
@@ -778,8 +925,12 @@ export function StrategyCanvas() {
         >
           {busy ? "Saving…" : "Save strategy"}
         </button>
-        <span className="ml-auto px-1 text-[10px] text-zinc-600">
-          {problem ?? "modules compile to one strategy · delete on the module"}
+        <span
+          className={`ml-auto px-1 text-[10px] ${
+            notice || problem ? "text-accent-amber" : "text-zinc-600"
+          }`}
+        >
+          {notice ?? problem ?? "modules compile to one strategy · delete on the module"}
         </span>
       </div>
 
