@@ -23,6 +23,7 @@ import {
   useNodesState,
   type Connection,
   type Edge,
+  type ReactFlowInstance,
   type Node,
   type NodeProps,
   type NodeTypes,
@@ -364,24 +365,51 @@ export function BacktestCanvas() {
     [params, busy, error, result, removeNode],
   );
 
+  // The instance is what converts a screen point into canvas coordinates,
+  // so a dropped module lands under the cursor rather than at some fixed
+  // offset that ignores pan and zoom.
+  const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+
   const addNode = useCallback(
-    (type: string) => {
+    (type: string, position?: { x: number; y: number }) => {
       const id = `${type}-${seq}`;
       setSeq((n) => n + 1);
-      // Drop new nodes on a light diagonal cascade so they never land
-      // exactly on top of an existing one.
       setNodes((ns) => [
         ...ns,
         {
           id,
           type,
-          position: { x: 120 + (ns.length % 4) * 40, y: 120 + (ns.length % 6) * 40 },
+          // Clicking still works and still cascades, so repeated clicks
+          // never stack modules exactly on top of each other.
+          position: position ?? {
+            x: 120 + (ns.length % 4) * 40,
+            y: 120 + (ns.length % 6) * 40,
+          },
           data: {},
         },
       ]);
     },
     [seq, setNodes],
   );
+
+  const onDragStart = (event: React.DragEvent, type: string) => {
+    event.dataTransfer.setData("application/reactflow", type);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  // preventDefault on dragover is what marks the canvas as a valid drop
+  // target; without it the browser refuses the drop and nothing fires.
+  const onDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    const type = event.dataTransfer.getData("application/reactflow");
+    if (!type || !flow) return;
+    addNode(type, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+  };
 
   const duplicateSelected = useCallback(() => {
     setNodes((ns) => {
@@ -420,7 +448,15 @@ export function BacktestCanvas() {
           Add module
         </span>
         {PALETTE.map((p) => (
-          <button key={p.type} type="button" onClick={() => addNode(p.type)} className={TOOLBTN}>
+          <button
+            key={p.type}
+            type="button"
+            draggable
+            onDragStart={(e) => onDragStart(e, p.type)}
+            onClick={() => addNode(p.type)}
+            title={`Drag onto the canvas, or click to add ${p.label}`}
+            className={`${TOOLBTN} cursor-grab active:cursor-grabbing`}
+          >
             + {p.label}
           </button>
         ))}
@@ -439,16 +475,17 @@ export function BacktestCanvas() {
           Reset
         </button>
         <span className="ml-auto px-1 text-[10px] text-zinc-600">
-          hover a node and hit × to delete it · these buttons act on the selection
+          drag a module onto the canvas, or click to add · hover a node and hit × to delete it
         </span>
       </div>
-      <div className="h-[640px] rounded-lg border border-border bg-bg">
+      <div className="h-[640px] rounded-lg border border-border bg-bg" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onInit={setFlow}
           nodeTypes={NODE_TYPES}
           fitView
           proOptions={{ hideAttribution: true }}

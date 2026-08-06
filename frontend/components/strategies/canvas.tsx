@@ -17,6 +17,7 @@ import {
   useNodesState,
   type Connection,
   type Edge,
+  type ReactFlowInstance,
   type Node,
   type NodeTypes,
 } from "@xyflow/react";
@@ -242,8 +243,12 @@ export function StrategyCanvas() {
     [rules, setRule, timeframe],
   );
 
+  // The instance converts a screen point into canvas coordinates, so a
+  // dropped module lands under the cursor regardless of pan and zoom.
+  const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+
   const addRule = useCallback(
-    (role: Role) => {
+    (role: Role, position?: { x: number; y: number }) => {
       const id = `r${seq}`;
       setSeq((n) => n + 1);
       setRules((rs) => ({ ...rs, [id]: defaultRule(role) }));
@@ -252,13 +257,36 @@ export function StrategyCanvas() {
         {
           id,
           type: "rule",
-          position: { x: 80 + (ns.length % 3) * 60, y: 80 + (ns.length % 5) * 60 },
+          // Clicking keeps the cascade so repeated clicks do not stack.
+          position: position ?? {
+            x: 80 + (ns.length % 3) * 60,
+            y: 80 + (ns.length % 5) * 60,
+          },
           data: {},
         },
       ]);
     },
     [seq, setNodes],
   );
+
+  const onDragStart = (event: React.DragEvent, role: Role) => {
+    event.dataTransfer.setData("application/reactflow", role);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  // preventDefault on dragover is what marks the canvas as a valid drop
+  // target; without it the browser refuses the drop entirely.
+  const onDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    const role = event.dataTransfer.getData("application/reactflow") as Role;
+    if (!role || !flow) return;
+    addRule(role, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+  };
 
   const deleteSelected = useCallback(() => {
     setNodes((ns) => {
@@ -316,9 +344,21 @@ export function StrategyCanvas() {
     <Ctx.Provider value={state}>
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-panel p-2">
         <span className="px-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">Add module</span>
-        <button type="button" onClick={() => addRule("entry_long")} className={TOOLBTN}>+ Trigger</button>
-        <button type="button" onClick={() => addRule("filter")} className={TOOLBTN}>+ Filter</button>
-        <button type="button" onClick={() => addRule("exit_long")} className={TOOLBTN}>+ Exit</button>
+        {([["entry_long", "Trigger"], ["filter", "Filter"], ["exit_long", "Exit"]] as const).map(
+          ([role, label]) => (
+            <button
+              key={role}
+              type="button"
+              draggable
+              onDragStart={(e) => onDragStart(e, role)}
+              onClick={() => addRule(role)}
+              title={`Drag onto the canvas, or click to add ${label}`}
+              className={`${TOOLBTN} cursor-grab active:cursor-grabbing`}
+            >
+              + {label}
+            </button>
+          ),
+        )}
         <div className="mx-1 h-4 w-px bg-border" />
         <button type="button" onClick={deleteSelected} className={`${TOOLBTN} hover:bg-accent-red/20 hover:text-accent-red`}>Delete</button>
         <div className="mx-1 h-4 w-px bg-border" />
@@ -342,13 +382,14 @@ export function StrategyCanvas() {
       {msg && <div className="rounded-md border border-accent-green/40 bg-accent-green/10 p-3 text-xs text-accent-green">{msg}</div>}
       {error && <pre className="whitespace-pre-wrap rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-xs text-accent-red">{error}</pre>}
 
-      <div className="h-[600px] rounded-lg border border-border bg-bg">
+      <div className="h-[600px] rounded-lg border border-border bg-bg" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onInit={setFlow}
           nodeTypes={NODE_TYPES}
           fitView
           proOptions={{ hideAttribution: true }}
