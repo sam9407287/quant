@@ -8,8 +8,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import strategy_access  # noqa: F401
-from app.api import backtest, coverage, kbars, ml, roll_calendar, strategies
+from app.api import (
+    backtest,
+    coverage,
+    kbars,
+    ml,
+    roll_calendar,
+    strategies,
+    strategy_access,  # noqa: F401
+)
 from app.core.config import get_settings
 
 _settings = get_settings()

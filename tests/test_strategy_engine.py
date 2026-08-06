@@ -246,7 +246,7 @@ class TestOperands:
 
 class TestDefinitionValidation:
     def test_requires_an_entry(self) -> None:
-        with pytest.raises(ValidationError, match="entry_long/entry_short"):
+        with pytest.raises(ValidationError, match="a strategy needs an entry"):
             StrategyDefinition(timeframe="1h")
 
     def test_const_requires_value(self) -> None:

@@ -17,7 +17,9 @@ export type OperandKind =
   | "atr"
   | "roc"
   | "bollinger_upper"
-  | "bollinger_lower";
+  | "bollinger_lower"
+  | "session_high"
+  | "session_low";
 
 export type ConditionOp = "cross_above" | "cross_below" | "gt" | "lt";
 
@@ -26,6 +28,9 @@ export interface Operand {
   window?: number;
   window2?: number; // macd slow period
   value?: number | null; // const value or bollinger std multiple
+  /** session_high/session_low only — "HH:MM:SS" bounds of the window. */
+  time_start?: string;
+  time_end?: string;
 }
 
 export interface Condition {
@@ -39,6 +44,27 @@ export interface Bracket {
   value: number;
 }
 
+/** The trading session an intraday strategy lives inside; `close` is also
+ *  the forced-flat time. Times are "HH:MM:SS". */
+export interface SessionSpec {
+  tz: string;
+  open: string;
+  close: string;
+}
+
+/** Two resting orders bracketing a level pair, first touch wins — the
+ *  order-driven entry an ICT killzone needs. */
+export interface StopEntry {
+  upper_level: Operand | null;
+  lower_level: Operand | null;
+  mode: "breakout" | "fade";
+  offset_mode: "points" | "pct" | "atr";
+  offset_value: number;
+  atr_period: number;
+  active_from: string | null;
+  oco: boolean;
+}
+
 export interface StrategyDefinition {
   timeframe: Timeframe;
   default_lookback_days: number;
@@ -49,6 +75,9 @@ export interface StrategyDefinition {
   filters: Condition[];
   sl: Bracket | null;
   tp: Bracket | null;
+  session?: SessionSpec | null;
+  stop_entry?: StopEntry | null;
+  max_trades_per_session?: number | null;
 }
 
 export interface StrategyRecord {

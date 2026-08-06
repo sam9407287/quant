@@ -14,12 +14,14 @@ export default function BacktestPage() {
             Rule-based intraday backtests: killzone OCO (ICT Judas Swing).
             Set the reference range, order timing and bracket, run against
             stored 1m bars, then read the equity curve, seasonality and
-            Monte Carlo risk bands. Prefer drawing your strategy?{" "}
+            Monte Carlo risk bands — in USD, after slippage and commission.
+            To combine a killzone with indicator rules instead, build it on
+            the{" "}
             <Link
-              href="/research/backtest/canvas"
+              href="/research/strategies/canvas"
               className="text-accent-blue hover:underline"
             >
-              Open the node canvas
+              strategy canvas
             </Link>
             .
           </p>

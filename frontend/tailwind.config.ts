@@ -21,6 +21,10 @@ const config: Config = {
           green: "#26a69a",
           red: "#ef5350",
           blue: "#5b8def",
+          // Amber: the fourth canvas-module hue. Its hue sits well clear of
+          // the other three, which is what a module border has to do — tell
+          // you at a glance which kind of block you are looking at.
+          amber: "#e0a458",
         },
       },
       fontFamily: {

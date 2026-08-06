@@ -1,26 +1,10 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { RequireAuth } from "@/components/auth/require-auth";
-
-import { BacktestCanvas } from "@/components/backtest/canvas";
-
+// There is one canvas now. The killzone blocks this page used to host are
+// modules on the strategy canvas (Session / Killzone / Bracket), where they
+// compose with the indicator rules instead of living in a parallel graph.
+// The parameter form at /research/backtest is untouched — it is still the
+// only path to USD P&L with slippage and commission.
 export default function BacktestCanvasPage() {
-  return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Backtest canvas</h1>
-        <p className="mt-2 max-w-3xl text-sm text-zinc-400">
-          Node view of the same strategy config: edit the blocks, then hit
-          Run. The graph compiles to the exact params JSON the{" "}
-          <Link href="/research/backtest" className="text-accent-blue hover:underline">
-            form page
-          </Link>{" "}
-          sends — same engine, same API.
-        </p>
-      </header>
-      <RequireAuth>
-        <BacktestCanvas />
-      </RequireAuth>
-    </div>
-  );
+  redirect("/research/strategies/canvas");
 }
