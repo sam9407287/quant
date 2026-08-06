@@ -10,10 +10,12 @@ import {
   Background,
   Controls,
   Handle,
+  addEdge,
   Position,
   ReactFlow,
   useEdgesState,
   useNodesState,
+  type Connection,
   type Edge,
   type Node,
   type NodeTypes,
@@ -214,13 +216,22 @@ export function StrategyCanvas() {
     r1: defaultRule("entry_long"),
   });
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(INITIAL_NODES);
-  const [edges, , onEdgesChange] = useEdgesState<Edge>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [seq, setSeq] = useState(2);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Edges here are annotation, not wiring: each module carries its own role
+  // and condition, so the compiled StrategyDefinition does not read the
+  // graph. Drawing them still has to work — a canvas whose handles refuse
+  // to connect reads as broken.
+  const onConnect = useCallback(
+    (c: Connection) => setEdges((es) => addEdge({ ...c, animated: true }, es)),
+    [setEdges],
+  );
 
   const setRule = useCallback((id: string, patch: Partial<RuleState>) => {
     setRules((rs) => ({ ...rs, [id]: { ...rs[id], ...patch } }));
@@ -337,6 +348,7 @@ export function StrategyCanvas() {
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
           nodeTypes={NODE_TYPES}
           fitView
           proOptions={{ hideAttribution: true }}

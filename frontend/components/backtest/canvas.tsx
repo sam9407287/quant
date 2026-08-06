@@ -16,10 +16,12 @@ import {
   Background,
   Controls,
   Handle,
+  addEdge,
   Position,
   ReactFlow,
   useEdgesState,
   useNodesState,
+  type Connection,
   type Edge,
   type Node,
   type NodeProps,
@@ -321,6 +323,13 @@ export function BacktestCanvas() {
   const [seq, setSeq] = useState(1);
 
   // Drop a node and every edge that touched it, so no dangling edge is left.
+  // Without an onConnect handler React Flow lets you drag a link out of a
+  // handle but never commits it, so the line just vanishes on release.
+  const onConnect = useCallback(
+    (c: Connection) => setEdges((es) => addEdge({ ...c, animated: true }, es)),
+    [setEdges],
+  );
+
   const removeNode = useCallback(
     (id: string) => {
       setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -439,6 +448,7 @@ export function BacktestCanvas() {
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
           nodeTypes={NODE_TYPES}
           fitView
           proOptions={{ hideAttribution: true }}
