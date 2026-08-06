@@ -17,10 +17,32 @@ import {
   listStrategies,
   updateStrategy,
 } from "@/lib/strategies";
+import { STRATEGY_TEMPLATES, type StrategyTemplate } from "@/lib/strategy-templates";
 import { TIMEFRAMES, type Timeframe } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import { copyStrategy } from "@/lib/strategies";
 import { SharingPanel } from "@/components/strategies/sharing";
+
+// Session, killzone and per-session limits have no editor on this page —
+// they are canvas modules. This form still has to carry them through an
+// edit untouched, or opening a canvas-built strategy here and pressing
+// Save would quietly delete half of it.
+type IntradayParts = Pick<
+  StrategyDefinition,
+  "session" | "stop_entry" | "max_trades_per_session"
+>;
+
+const NO_INTRADAY: IntradayParts = {
+  session: null,
+  stop_entry: null,
+  max_trades_per_session: null,
+};
+
+const intradayOf = (d: StrategyDefinition): IntradayParts => ({
+  session: d.session ?? null,
+  stop_entry: d.stop_entry ?? null,
+  max_trades_per_session: d.max_trades_per_session ?? null,
+});
 
 const SECTION_CLASS =
   "rounded-lg border border-border bg-bg-panel p-5 space-y-4";
@@ -301,6 +323,7 @@ export function StrategyManager() {
   const [filters, setFilters] = useState<ConditionState[]>([]);
   const [sl, setSl] = useState<BracketState>({ enabled: false, mode: "points", value: 100 });
   const [tp, setTp] = useState<BracketState>({ enabled: false, mode: "points", value: 200 });
+  const [intraday, setIntraday] = useState<IntradayParts>(NO_INTRADAY);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -333,33 +356,42 @@ export function StrategyManager() {
     setFilters([]);
     setSl({ enabled: false, mode: "points", value: 100 });
     setTp({ enabled: false, mode: "points", value: 200 });
+    setIntraday(NO_INTRADAY);
+  }
+
+  /** Fill the form from a definition — shared by editing and templates. */
+  function loadDefinition(d: StrategyDefinition) {
+    setTimeframe(d.timeframe);
+    setLookback(d.default_lookback_days);
+    setEntryLong(fromCondition(d.entry_long));
+    setEntryShort(fromCondition(d.entry_short));
+    setExitLong(fromCondition(d.exit_long));
+    setExitShort(fromCondition(d.exit_short));
+    setFilters((d.filters ?? []).map((c) => fromCondition(c)));
+    setSl(d.sl ? { enabled: true, ...d.sl } : { enabled: false, mode: "points", value: 100 });
+    setTp(d.tp ? { enabled: true, ...d.tp } : { enabled: false, mode: "points", value: 200 });
+    setIntraday(intradayOf(d));
   }
 
   function startEdit(s: StrategyRecord) {
     setEditingId(s.id);
     setName(s.name);
     setDescription(s.description ?? "");
-    setTimeframe(s.definition.timeframe);
-    setLookback(s.definition.default_lookback_days);
-    setEntryLong(fromCondition(s.definition.entry_long));
-    setEntryShort(fromCondition(s.definition.entry_short));
-    setExitLong(fromCondition(s.definition.exit_long));
-    setExitShort(fromCondition(s.definition.exit_short));
-    setFilters((s.definition.filters ?? []).map((c) => fromCondition(c)));
-    setSl(
-      s.definition.sl
-        ? { enabled: true, ...s.definition.sl }
-        : { enabled: false, mode: "points", value: 100 },
-    );
-    setTp(
-      s.definition.tp
-        ? { enabled: true, ...s.definition.tp }
-        : { enabled: false, mode: "points", value: 200 },
-    );
+    loadDefinition(s.definition);
   }
 
+  function startFromTemplate(t: StrategyTemplate) {
+    setEditingId("new");
+    setName(t.name);
+    setDescription(t.blurb);
+    loadDefinition(t.definition);
+  }
+
+  // A killzone strategy has no signal entry at all — its entry is a resting
+  // order — so requiring one here would make it unsavable on this page.
   const canSave =
-    name.trim().length > 0 && (entryLong.enabled || entryShort.enabled);
+    name.trim().length > 0 &&
+    (entryLong.enabled || entryShort.enabled || intraday.stop_entry !== null);
 
   async function save() {
     setBusy(true);
@@ -377,6 +409,8 @@ export function StrategyManager() {
         .filter((c): c is Condition => c !== null),
       sl: sl.enabled ? { mode: sl.mode, value: sl.value } : null,
       tp: tp.enabled ? { mode: tp.mode, value: tp.value } : null,
+      // Carried through untouched — this form cannot edit them.
+      ...intraday,
     };
     const body = { name: name.trim(), description: description.trim() || null, definition };
     try {
@@ -419,6 +453,39 @@ export function StrategyManager() {
 
   return (
     <div className="space-y-6">
+      <section className={SECTION_CLASS}>
+        <h2 className="text-sm font-semibold text-zinc-200">Start from a template</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Textbook shapes with textbook parameters — a starting point to edit, not a
+          recommendation. None of them has been fitted to anything.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {STRATEGY_TEMPLATES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => startFromTemplate(t)}
+              className="group rounded-lg border border-border bg-bg-hover/40 p-3 text-left transition hover:border-accent-blue/50 hover:bg-bg-hover"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-200 group-hover:text-white">
+                  {t.label}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                  {t.definition.timeframe}
+                </span>
+              </div>
+              <p className="mt-1.5 text-xs leading-snug text-zinc-500">{t.blurb}</p>
+              {t.definition.session && (
+                <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-accent-amber">
+                  session · edit on the canvas
+                </p>
+              )}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className={SECTION_CLASS}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-200">Saved strategies</h2>
@@ -522,6 +589,16 @@ export function StrategyManager() {
           <h2 className="text-sm font-semibold text-zinc-200">
             {editingId === "new" ? "New strategy" : "Edit strategy"}
           </h2>
+          {(intraday.session || intraday.stop_entry) && (
+            <p className="rounded-md border border-accent-amber/40 bg-accent-amber/10 p-2.5 text-xs text-accent-amber">
+              This strategy has a session{intraday.stop_entry && " and a killzone entry"} — no
+              editor for those here, but saving keeps them. Change them on the{" "}
+              <a href="/research/strategies/canvas" className="underline">
+                strategy canvas
+              </a>
+              .
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className={LABEL_CLASS}>Name</label>

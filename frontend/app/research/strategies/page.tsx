@@ -10,9 +10,10 @@ export default function StrategiesPage() {
       <header>
         <h1 className="text-2xl font-semibold">Strategies</h1>
         <p className="mt-2 max-w-3xl text-sm text-zinc-400">
-          Build rule-based strategies from indicator conditions — signal
-          entries/exits with an optional SL/TP bracket — and save them as
-          templates. Prefer dragging modules? Try the <Link href="/research/strategies/canvas" className="text-accent-blue hover:underline">strategy canvas</Link>. Apply a saved strategy on the{" "}
+          Start from a template below, or build one from scratch: indicator
+          conditions for the entries and exits, an optional SL/TP bracket, and
+          filters that gate every entry. Prefer dragging modules — or need a
+          trading session and a killzone? Use the <Link href="/research/strategies/canvas" className="text-accent-blue hover:underline">strategy canvas</Link>. Apply a saved strategy on the{" "}
           <Link href="/chart" className="text-accent-blue hover:underline">
             chart
           </Link>{" "}

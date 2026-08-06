@@ -40,6 +40,7 @@ import type {
   StrategyDefinition,
 } from "@/lib/strategies";
 import { createStrategy } from "@/lib/strategies";
+import { STRATEGY_TEMPLATES } from "@/lib/strategy-templates";
 import { TIMEFRAMES, type Timeframe } from "@/lib/types";
 
 // ── Module model ──────────────────────────────────────────────────
@@ -136,55 +137,85 @@ function defaultModule(kind: ModuleKind, role: Role = "entry_long"): ModuleState
 
 // ── Presets ───────────────────────────────────────────────────────
 //
-// A blank canvas with one lone module teaches nothing. Each preset is a
-// complete, readable strategy of a recognisable kind, so the first thing
-// a user sees is what a finished one looks like — then they edit it.
-// Brackets are in percent so a preset means the same thing on any
-// instrument, whatever a point is worth there.
+// A blank canvas with one lone module teaches nothing, so the canvas
+// opens on a finished strategy. The definitions live in
+// lib/strategy-templates — shared with the form builder — and are
+// decomposed into modules here. Decomposing rather than keeping a
+// canvas-shaped copy is also what would let a saved strategy be reopened
+// on the canvas later.
 
-function rule(role: Role, op: ConditionOp, left: OperandState, right: OperandState): RuleState {
-  return { kind: "rule", role, op, left, right };
+/** The API speaks "HH:MM:SS"; <input type="time"> wants "HH:MM". */
+const hhmm = (t: string | null | undefined) => (t ?? "").slice(0, 5);
+
+function operandState(o: Operand | null | undefined): OperandState {
+  return {
+    kind: o?.kind ?? DEFAULT_OPERAND.kind,
+    window: o?.window ?? DEFAULT_OPERAND.window,
+    window2: o?.window2 ?? DEFAULT_OPERAND.window2,
+    value: o?.value ?? 0,
+  };
 }
-const oper = (kind: OperandKind, window = 20, extra: Partial<OperandState> = {}): OperandState => ({
-  ...DEFAULT_OPERAND, kind, window, ...extra,
+
+const ruleFrom = (role: Role, c: Condition): RuleState => ({
+  kind: "rule",
+  role,
+  op: c.op,
+  left: operandState(c.left),
+  right: operandState(c.right),
 });
 
-const PRESETS: { key: string; label: string; timeframe: Timeframe; modules: ModuleState[] }[] = [
-  {
-    key: "ema_cross",
-    label: "EMA crossover (trend)",
-    timeframe: "1h",
-    modules: [
-      rule("entry_long", "cross_above", oper("ema", 20), oper("ema", 60)),
-      rule("exit_long", "cross_below", oper("ema", 20), oper("ema", 60)),
-      { kind: "bracket", slMode: "pct", slValue: 1, tpMode: "pct", tpValue: 2 },
-    ],
-  },
-  {
-    key: "mean_reversion",
-    label: "Mean reversion (Bollinger)",
-    timeframe: "1h",
-    modules: [
-      // Buy the stretch below the lower band, leave when price is back at
-      // the mean. The RSI filter keeps it from buying a strong downtrend
-      // that simply keeps going.
-      rule("entry_long", "cross_below", oper("price"), oper("bollinger_lower", 20, { value: 2 })),
-      rule("exit_long", "cross_above", oper("price"), oper("sma", 20)),
-      rule("filter", "lt", oper("rsi", 14), oper("const", 14, { value: 40 })),
-      { kind: "bracket", slMode: "pct", slValue: 1, tpMode: "pct", tpValue: 2 },
-    ],
-  },
-  {
-    key: "ict_killzone",
-    label: "ICT killzone (session OCO)",
-    timeframe: "5m",
-    modules: [
-      defaultModule("session"),
-      defaultModule("killzone"),
-      { kind: "bracket", slMode: "points", slValue: 10, tpMode: "points", tpValue: 20 },
-    ],
-  },
-];
+function fromDefinition(d: StrategyDefinition): ModuleState[] {
+  const out: ModuleState[] = [];
+  const slots: [Role, Condition | null][] = [
+    ["entry_long", d.entry_long],
+    ["entry_short", d.entry_short],
+    ["exit_long", d.exit_long],
+    ["exit_short", d.exit_short],
+  ];
+  for (const [role, cond] of slots) if (cond) out.push(ruleFrom(role, cond));
+  for (const f of d.filters ?? []) out.push(ruleFrom("filter", f));
+
+  if (d.session) {
+    out.push({
+      kind: "session",
+      tz: d.session.tz,
+      open: hhmm(d.session.open),
+      close: hhmm(d.session.close),
+      maxTrades: d.max_trades_per_session ?? 0,
+    });
+  }
+  if (d.stop_entry) {
+    // Both sides carry the same window; either one answers for it.
+    const level = d.stop_entry.upper_level ?? d.stop_entry.lower_level;
+    out.push({
+      kind: "killzone",
+      rangeStart: hhmm(level?.time_start),
+      rangeEnd: hhmm(level?.time_end),
+      activeFrom: hhmm(d.stop_entry.active_from),
+      mode: d.stop_entry.mode,
+      offsetMode: d.stop_entry.offset_mode,
+      offsetValue: d.stop_entry.offset_value,
+      oco: d.stop_entry.oco,
+    });
+  }
+  if (d.sl || d.tp) {
+    out.push({
+      kind: "bracket",
+      slMode: d.sl?.mode ?? "points",
+      slValue: d.sl?.value ?? 0,
+      tpMode: d.tp?.mode ?? "points",
+      tpValue: d.tp?.value ?? 0,
+    });
+  }
+  return out;
+}
+
+const PRESETS = STRATEGY_TEMPLATES.map((t) => ({
+  key: t.key,
+  label: t.label,
+  timeframe: t.definition.timeframe,
+  modules: fromDefinition(t.definition),
+}));
 
 /** Grid wide enough that a module (288px) never covers the one before it. */
 const gridPosition = (i: number) => ({
