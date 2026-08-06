@@ -22,7 +22,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   Condition,
@@ -163,14 +163,23 @@ function OperandFields({
   );
 }
 
-function RuleNode({ id }: { id: string }) {
+// `previewRule` turns this into the palette ghost: it renders a rule that
+// is not in the canvas yet, so the lookup would find nothing, and it drops
+// its handles because a <Handle> outside a ReactFlow tree tries to register
+// with a store that is not there.
+function RuleNode({ id, previewRule }: { id: string; previewRule?: RuleState }) {
   const { rules, setRule } = useCanvas();
-  const r = rules[id];
+  const r = previewRule ?? rules[id];
   if (!r) return null;
+  const preview = previewRule !== undefined;
   const isFilter = r.role === "filter";
   return (
-    <div className={`w-72 rounded-lg border ${isFilter ? "border-accent-blue/40" : "border-border"} bg-bg-panel shadow-lg`}>
-      <Handle type="target" position={Position.Left} />
+    <div
+      className={`w-72 rounded-lg border ${isFilter ? "border-accent-blue/40" : "border-border"} bg-bg-panel shadow-lg ${
+        preview ? "pointer-events-none select-none" : ""
+      }`}
+    >
+      {!preview && <Handle type="target" position={Position.Left} />}
       <div className="flex items-center justify-between rounded-t-lg border-b border-border bg-bg-hover px-3 py-1.5">
         <select
           className="nodrag bg-transparent font-mono text-xs uppercase tracking-wider text-accent-blue focus:outline-none"
@@ -199,12 +208,17 @@ function RuleNode({ id }: { id: string }) {
         </select>
         <OperandFields s={r.right} onChange={(right) => setRule(id, { right })} />
       </div>
-      <Handle type="source" position={Position.Right} />
+      {!preview && <Handle type="source" position={Position.Right} />}
     </div>
   );
 }
 
 const NODE_TYPES: NodeTypes = { rule: RuleNode };
+
+/** The ghost that follows the cursor — the real node, made inert. */
+function ModulePreview({ role }: { role: Role }) {
+  return <RuleNode id="__preview" previewRule={defaultRule(role)} />;
+}
 
 const INITIAL_NODES: Node[] = [
   { id: "r1", type: "rule", position: { x: 40, y: 40 }, data: {} },
@@ -246,6 +260,20 @@ export function StrategyCanvas() {
   // The instance converts a screen point into canvas coordinates, so a
   // dropped module lands under the cursor regardless of pan and zoom.
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+
+  // Hovering a palette entry floats a translucent copy of the module under
+  // the cursor, so what you are about to place is visible before committing
+  // to the drag.
+  const [hoverRole, setHoverRole] = useState<Role | null>(null);
+  const [cursor, setCursor] = useState({ x: 0, y: 0 });
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hoverRole) return;
+    const track = (e: MouseEvent) => setCursor({ x: e.clientX, y: e.clientY });
+    window.addEventListener("mousemove", track);
+    return () => window.removeEventListener("mousemove", track);
+  }, [hoverRole]);
 
   const addRule = useCallback(
     (role: Role, position?: { x: number; y: number }) => {
@@ -350,9 +378,18 @@ export function StrategyCanvas() {
               key={role}
               type="button"
               draggable
-              onDragStart={(e) => onDragStart(e, role)}
+              onMouseEnter={(e) => {
+                setCursor({ x: e.clientX, y: e.clientY });
+                setHoverRole(role);
+              }}
+              onMouseLeave={() => setHoverRole(null)}
+              onDragStart={(e) => {
+                onDragStart(e, role);
+                // Drag the module itself rather than a picture of the button.
+                if (ghostRef.current) e.dataTransfer.setDragImage(ghostRef.current, 24, 24);
+              }}
+              onDragEnd={() => setHoverRole(null)}
               onClick={() => addRule(role)}
-              title={`Drag onto the canvas, or click to add ${label}`}
               className={`${TOOLBTN} cursor-grab active:cursor-grabbing`}
             >
               + {label}
@@ -381,6 +418,17 @@ export function StrategyCanvas() {
 
       {msg && <div className="rounded-md border border-accent-green/40 bg-accent-green/10 p-3 text-xs text-accent-green">{msg}</div>}
       {error && <pre className="whitespace-pre-wrap rounded-md border border-accent-red/40 bg-accent-red/10 p-3 text-xs text-accent-red">{error}</pre>}
+
+      {hoverRole && (
+        <div
+          ref={ghostRef}
+          aria-hidden
+          className="pointer-events-none fixed z-50 opacity-60 drop-shadow-2xl"
+          style={{ left: cursor.x + 18, top: cursor.y + 18 }}
+        >
+          <ModulePreview role={hoverRole} />
+        </div>
+      )}
 
       <div className="h-[600px] rounded-lg border border-border bg-bg" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow

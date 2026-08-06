@@ -29,7 +29,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { EquityChart } from "@/components/backtest/charts";
 import type {
@@ -99,25 +99,40 @@ const FIELD =
 const NLABEL =
   "block font-mono text-[10px] uppercase tracking-wider text-zinc-500";
 
+// The palette preview reuses the real node components so the ghost can
+// never drift from what actually gets dropped. In preview mode the chrome
+// drops its handles — a <Handle> outside a ReactFlow tree tries to
+// register with a store that is not there — and its delete button, which
+// would point at a node id that does not exist.
+export type NodeCompProps = NodeProps & { preview?: boolean };
+
 function Shell({
   nodeId,
   title,
   children,
   input,
   output,
+  preview,
 }: {
   nodeId: string;
   title: string;
   children: React.ReactNode;
   input?: boolean;
   output?: boolean;
+  preview?: boolean;
 }) {
   const { removeNode } = useCanvas();
   return (
-    <div className="group w-56 rounded-lg border border-border bg-bg-panel shadow-lg">
-      {input && <Handle type="target" position={Position.Left} />}
+    <div
+      className={`group w-56 rounded-lg border border-border bg-bg-panel shadow-lg ${
+        preview ? "pointer-events-none select-none" : ""
+      }`}
+    >
+      {input && !preview && <Handle type="target" position={Position.Left} />}
       <div className="flex items-center gap-2 rounded-t-lg border-b border-border bg-bg-hover px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-accent-blue">
         <span className="truncate">{title}</span>
+        {!preview && (
+        <>
         {/* Delete lives on the node itself — the toolbar button was not
             discoverable. `nodrag` stops React Flow from starting a drag,
             and stopPropagation keeps the click off the node selection. */}
@@ -136,19 +151,21 @@ function Shell({
         >
           ×
         </button>
+        </>
+        )}
       </div>
       <div className="space-y-2 p-3">{children}</div>
-      {output && <Handle type="source" position={Position.Right} />}
+      {output && !preview && <Handle type="source" position={Position.Right} />}
     </div>
   );
 }
 
 // ── Nodes ─────────────────────────────────────────────────────────
 
-function UniverseNode({ id }: NodeProps) {
+function UniverseNode({ id, preview }: NodeCompProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell nodeId={id} title="Universe" output>
+    <Shell nodeId={id} preview={preview} title="Universe" output>
       <label className={NLABEL}>Instrument</label>
       <select
         className={FIELD}
@@ -171,11 +188,11 @@ function UniverseNode({ id }: NodeProps) {
   );
 }
 
-function ClockNode({ id }: NodeProps) {
+function ClockNode({ id, preview }: NodeCompProps) {
   const { params, updateClock } = useCanvas();
   const c = params.clock;
   return (
-    <Shell nodeId={id} title="Session clock" output>
+    <Shell nodeId={id} preview={preview} title="Session clock" output>
       <label className={NLABEL}>Timezone</label>
       <input className={FIELD} value={c.tz} onChange={(e) => updateClock({ tz: e.target.value })} />
       <label className={NLABEL}>Range window</label>
@@ -192,10 +209,10 @@ function ClockNode({ id }: NodeProps) {
   );
 }
 
-function EntryNode({ id }: NodeProps) {
+function EntryNode({ id, preview }: NodeCompProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell nodeId={id} title="Entry" input output>
+    <Shell nodeId={id} preview={preview} title="Entry" input output>
       <label className={NLABEL}>Direction</label>
       <select className={FIELD} value={params.direction_mode} onChange={(e) => update({ direction_mode: e.target.value as DirectionMode })}>
         <option value="fade">fade (mean reversion)</option>
@@ -214,10 +231,10 @@ function EntryNode({ id }: NodeProps) {
   );
 }
 
-function RiskNode({ id }: NodeProps) {
+function RiskNode({ id, preview }: NodeCompProps) {
   const { params, update } = useCanvas();
   return (
-    <Shell nodeId={id} title="Risk bracket" input output>
+    <Shell nodeId={id} preview={preview} title="Risk bracket" input output>
       <label className={NLABEL}>Stop mode · value</label>
       <div className="flex gap-2">
         <select className={FIELD} value={params.sl_mode} onChange={(e) => update({ sl_mode: e.target.value as OffsetMode })}>
@@ -239,10 +256,10 @@ function RiskNode({ id }: NodeProps) {
   );
 }
 
-function RunNode({ id }: NodeProps) {
+function RunNode({ id, preview }: NodeCompProps) {
   const { busy, error, result, run } = useCanvas();
   return (
-    <Shell nodeId={id} title="Run" input>
+    <Shell nodeId={id} preview={preview} title="Run" input>
       <button
         type="button"
         onClick={run}
@@ -272,6 +289,21 @@ function RunNode({ id }: NodeProps) {
       )}
     </Shell>
   );
+}
+
+const PREVIEW_COMPONENTS: Record<string, (p: NodeCompProps) => React.ReactElement> = {
+  universe: UniverseNode,
+  clock: ClockNode,
+  entry: EntryNode,
+  risk: RiskNode,
+  run: RunNode,
+};
+
+/** The ghost that follows the cursor — the real node, made inert. */
+function ModulePreview({ type }: { type: string }) {
+  const Component = PREVIEW_COMPONENTS[type];
+  if (!Component) return null;
+  return <Component {...({ id: "__preview", preview: true } as unknown as NodeCompProps)} />;
 }
 
 const NODE_TYPES: NodeTypes = {
@@ -370,6 +402,20 @@ export function BacktestCanvas() {
   // offset that ignores pan and zoom.
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
 
+  // Hovering a palette entry floats a translucent copy of the module under
+  // the cursor, so what you are about to place is visible before you commit
+  // to dragging it.
+  const [hoverType, setHoverType] = useState<string | null>(null);
+  const [cursor, setCursor] = useState({ x: 0, y: 0 });
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hoverType) return;
+    const track = (e: MouseEvent) => setCursor({ x: e.clientX, y: e.clientY });
+    window.addEventListener("mousemove", track);
+    return () => window.removeEventListener("mousemove", track);
+  }, [hoverType]);
+
   const addNode = useCallback(
     (type: string, position?: { x: number; y: number }) => {
       const id = `${type}-${seq}`;
@@ -452,9 +498,18 @@ export function BacktestCanvas() {
             key={p.type}
             type="button"
             draggable
-            onDragStart={(e) => onDragStart(e, p.type)}
+            onMouseEnter={(e) => {
+              setCursor({ x: e.clientX, y: e.clientY });
+              setHoverType(p.type);
+            }}
+            onMouseLeave={() => setHoverType(null)}
+            onDragStart={(e) => {
+              onDragStart(e, p.type);
+              // Drag the module itself rather than a picture of the button.
+              if (ghostRef.current) e.dataTransfer.setDragImage(ghostRef.current, 24, 24);
+            }}
+            onDragEnd={() => setHoverType(null)}
             onClick={() => addNode(p.type)}
-            title={`Drag onto the canvas, or click to add ${p.label}`}
             className={`${TOOLBTN} cursor-grab active:cursor-grabbing`}
           >
             + {p.label}
@@ -478,6 +533,17 @@ export function BacktestCanvas() {
           drag a module onto the canvas, or click to add · hover a node and hit × to delete it
         </span>
       </div>
+      {hoverType && (
+        <div
+          ref={ghostRef}
+          aria-hidden
+          className="pointer-events-none fixed z-50 opacity-60 drop-shadow-2xl"
+          style={{ left: cursor.x + 18, top: cursor.y + 18 }}
+        >
+          <ModulePreview type={hoverType} />
+        </div>
+      )}
+
       <div className="h-[640px] rounded-lg border border-border bg-bg" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
