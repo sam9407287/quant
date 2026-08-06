@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import { AuthButton } from "@/components/auth/sign-in";
@@ -18,7 +19,15 @@ export function Nav() {
   return (
     <header className="border-b border-border bg-bg-panel">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        <Link href="/" className="font-mono text-lg font-semibold tracking-tight">
+        <Link href="/" className="flex items-center gap-2.5 font-mono text-lg font-semibold tracking-tight">
+          <Image
+            src="/logo-mark-blue.png"
+            alt=""
+            width={28}
+            height={28}
+            priority
+            className="h-7 w-7"
+          />
           quant<span className="text-accent-blue">.futures</span>
         </Link>
         <nav className="flex gap-1 text-sm">
