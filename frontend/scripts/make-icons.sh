@@ -25,12 +25,14 @@ PUB="$HERE/../public"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Brand palette — mirrors tailwind.config.ts.
-BG="#0b0d12"       # page background
-PANEL="#13161d"    # badge fill
-BORDER="#262b36"
-BLUE="#5b8def"
-INK="#e6edf7"
+# Monochrome identity: a white mark on black. The letterforms carry the
+# brand, so colour is left to the interface rather than the logo.
+BG="#000000"       # icon and preview-card background
+PANEL="#000000"    # badge fill
+BORDER="#2a2a2a"   # just enough edge to separate the badge from a dark tab
+MARK="white"
+INK="#ffffff"
+MUTED="#9aa3b2"
 MONO="/System/Library/Fonts/Menlo.ttc"
 
 mkdir -p "$APP" "$PUB"
@@ -58,8 +60,7 @@ recolour() { # $1=colour $2=out
     \( "$WORK/mark.png" -alpha extract \) \
     -alpha off -compose CopyOpacity -composite "$2"
 }
-recolour "$BLUE" "$WORK/mark-blue.png"
-recolour "white" "$WORK/mark-white.png"
+recolour "$MARK" "$WORK/mark-white.png"
 
 # A rounded-square badge so the icon reads as one shape on any tab colour.
 badge() { # $1=size $2=out
@@ -82,31 +83,30 @@ compose_badge() { # $1=size $2=mark $3=out
 }
 
 echo "→ app/icon.png (browser tab)"
-compose_badge 512 "$WORK/mark-blue.png" "$APP/icon.png"
+compose_badge 512 "$WORK/mark-white.png" "$APP/icon.png"
 
 echo "→ app/apple-icon.png (iOS home screen)"
 # iOS masks the corners itself and never shows transparency, so this one is
 # a filled square rather than a rounded badge.
 magick -size 180x180 "xc:$PANEL" \
-  \( "$WORK/mark-blue.png" -resize 124x124 \) \
+  \( "$WORK/mark-white.png" -resize 124x124 \) \
   -gravity center -composite "$APP/apple-icon.png"
 
 echo "→ public/logo-mark.png (nav, transparent)"
 magick "$WORK/mark-white.png" -resize 256x256 "$PUB/logo-mark.png"
-magick "$WORK/mark-blue.png" -resize 256x256 "$PUB/logo-mark-blue.png"
 
 echo "→ app/opengraph-image.png (link previews)"
 # `-gravity` is sticky in ImageMagick: the value set for the composite is
 # still in force when -annotate runs, which throws every coordinate off. Set
 # it back to northwest explicitly so the text offsets are plain top-left.
 magick -size 1200x630 "xc:$BG" \
-  \( "$WORK/mark-blue.png" -resize 320x320 \) -gravity west -geometry +100+0 -composite \
+  \( "$WORK/mark-white.png" -resize 320x320 \) -gravity west -geometry +100+0 -composite \
   -gravity northwest -font "$MONO" \
   `# y is the TOP of each text box under northwest gravity, not the` \
   `# baseline — lines need their full point size cleared beneath them.` \
   -fill "$INK"    -pointsize 76 -annotate +470+228 "quant.futures" \
-  -fill "$BLUE"   -pointsize 28 -annotate +474+352 "CME index futures analytics" \
-  -fill "#7d8da3" -pointsize 24 -annotate +474+400 "quant.samlabhq.com" \
+  -fill "$MUTED"  -pointsize 28 -annotate +474+352 "CME index futures analytics" \
+  -fill "$MUTED"  -pointsize 24 -annotate +474+400 "quant.samlabhq.com" \
   "$APP/opengraph-image.png"
 
 echo "→ app/favicon.ico (multi-resolution)"
@@ -114,7 +114,7 @@ echo "→ app/favicon.ico (multi-resolution)"
 # badge and lets the mark fill the frame. Browsers pick the size they need
 # out of the .ico, so the small case gets its own artwork rather than a
 # blurred-down copy of the large one.
-magick "$WORK/mark-blue.png" -resize 16x16 -background none -gravity center -extent 16x16 "$WORK/ico-16.png"
+magick "$WORK/mark-white.png" -resize 16x16 -background none -gravity center -extent 16x16 "$WORK/ico-16.png"
 magick "$APP/icon.png" -resize 32x32 "$WORK/ico-32.png"
 magick "$APP/icon.png" -resize 48x48 "$WORK/ico-48.png"
 magick "$WORK/ico-16.png" "$WORK/ico-32.png" "$WORK/ico-48.png" "$APP/favicon.ico"
@@ -136,6 +136,6 @@ magick "$WORK/zoom.png" "$WORK/actual.png" -append "$PUB/icon-size-check.png"
 echo
 echo "done:"
 for f in "$APP/icon.png" "$APP/favicon.ico" "$APP/apple-icon.png" "$APP/opengraph-image.png" \
-         "$PUB/logo-mark.png" "$PUB/logo-mark-blue.png"; do
+         "$PUB/logo-mark.png"; do
   printf "  %-34s %s\n" "${f#"$HERE/../"}" "$(magick identify -format '%wx%h %b' "$f")"
 done
