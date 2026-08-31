@@ -7,6 +7,7 @@ import {
   PriceScaleMode,
   type AutoscaleInfo,
   type IChartApi,
+  type LogicalRange,
   type ISeriesApi,
   type SeriesMarker,
   type SeriesType,
@@ -48,6 +49,32 @@ interface Props {
   initialInstrument: Instrument;
   initialTimeframe: Timeframe;
 }
+
+/**
+ * Raw (unfolded) bars plus how far back they reach.
+ *
+ * The chart used to hold exactly one fixed lookback window, so it could only
+ * ever draw a fixed number of candles — scrolling left ran into a wall of
+ * empty canvas. Panning near the left edge now *extends* this backwards a
+ * chunk at a time instead of replacing it, so history is bounded only by
+ * what the backend actually stores.
+ */
+interface History {
+  /** Selection these bars belong to; a mismatch means they are stale. */
+  key: string;
+  bars: KBar[];
+  /** Earliest instant already requested — the next chunk ends here. */
+  from: Date;
+  /** Nothing older than `from` exists; stop asking. */
+  exhausted: boolean;
+}
+
+/**
+ * Start fetching once the viewport's left edge is within this many bars of
+ * the oldest one held. Firing early keeps the request ahead of the pan, so
+ * the wall never becomes visible.
+ */
+const BACKFILL_TRIGGER_BARS = 30;
 
 function toUtcSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -91,9 +118,17 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   );
   // The stored timeframe actually requested; folded intervals borrow theirs.
   const timeframe: Timeframe = interval.base;
-  const [bars, setBars] = useState<KBar[] | null>(null);
+  const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [backfilling, setBackfilling] = useState(false);
+  // Folding is cheap and pure, so the raw bars are what is stored and the
+  // displayed series is derived. A backfill therefore re-folds across the
+  // join, which is the only way a group straddling the seam comes out whole.
+  const bars = useMemo(
+    () => (history ? resample(history.bars, interval) : null),
+    [history, interval],
+  );
 
   const [strategies, setStrategies] = useState<StrategyRecord[]>([]);
   const [strategyId, setStrategyId] = useState<string>("");
@@ -133,7 +168,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   // meant every switch issued a doomed request (an empty window, so zero
   // bars) whose failure could overwrite the good response that followed.
   const selectionKey = `${instrument}|${timeframe}`;
-  const [anchor, setAnchor] = useState<{ key: string; iso: string } | null>(null);
+  const [anchor, setAnchor] = useState<
+    { key: string; latest: string; earliest: string } | null
+  >(null);
   const anchorReady = anchor?.key === selectionKey;
 
   useEffect(() => {
@@ -142,12 +179,18 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       .then((rows) => {
         if (cancelled) return;
         const row = rows.find((r) => r.timeframe === timeframe);
-        setAnchor({ key: `${instrument}|${timeframe}`, iso: row?.latest_ts ?? "" });
+        setAnchor({
+          key: `${instrument}|${timeframe}`,
+          latest: row?.latest_ts ?? "",
+          earliest: row?.earliest_ts ?? "",
+        });
       })
       .catch(() => {
         // Coverage is an optimisation — fall back to wall-clock, but still
         // tag the selection so the bar fetch is unblocked.
-        if (!cancelled) setAnchor({ key: `${instrument}|${timeframe}`, iso: "" });
+        if (!cancelled) {
+          setAnchor({ key: `${instrument}|${timeframe}`, latest: "", earliest: "" });
+        }
       });
     return () => {
       cancelled = true;
@@ -156,12 +199,23 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
 
   const range = useMemo(() => {
     if (!anchorReady || !anchor) return null;
-    const end = anchor.iso ? new Date(anchor.iso) : new Date();
+    const end = anchor.latest ? new Date(anchor.latest) : new Date();
     const start = new Date(end);
     start.setUTCDate(end.getUTCDate() - lookbackDays(interval));
     // Ask slightly past the last bar so the newest one is never clipped.
     return { start, end: new Date(end.getTime() + 86_400_000) };
   }, [anchorReady, anchor, interval]);
+
+  // Oldest bar the backend holds: the hard floor for backfill, so panning
+  // left stops asking instead of walking off into empty centuries.
+  const floor = useMemo(
+    () => (anchor?.earliest ? new Date(anchor.earliest) : null),
+    [anchor],
+  );
+
+  // Raw bars only depend on instrument + stored timeframe, but the size of a
+  // chunk is per-interval, so a folded interval gets its own history.
+  const historyKey = `${instrument}|${interval.id}`;
 
   // Initialise the chart instance once and tear it down on unmount; resize
   // observation lives in the same effect so it registers exactly once.
@@ -303,8 +357,12 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     )
       .then((res) => {
         if (superseded) return;
-        // Native intervals pass straight through; the rest are folded here.
-        setBars(resample(res.data, interval));
+        setHistory({
+          key: historyKey,
+          bars: res.data,
+          from: range.start,
+          exhausted: floor !== null && range.start <= floor,
+        });
       })
       .catch((e: unknown) => {
         // `superseded` rather than signal.aborted alone: a cancelled request
@@ -313,7 +371,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         // stale rejection must never overwrite the newer request's state.
         if (superseded || controller.signal.aborted) return;
         setError(e instanceof Error ? e.message : String(e));
-        setBars([]);
+        setHistory({ key: historyKey, bars: [], from: range.start, exhausted: true });
       })
       .finally(() => {
         if (!superseded) setLoading(false);
@@ -322,13 +380,99 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       superseded = true;
       controller.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instrument, timeframe, interval, range]);
+
+  // ── Backfill on pan ───────────────────────────────────────────────
+  // Reading the current history through a ref rather than closing over it
+  // keeps the staleness check synchronous: by the time an await resolves,
+  // the user may have switched instrument or already pulled another chunk.
+  const historyRef = useRef<History | null>(null);
+  historyRef.current = history;
+  const backfillingRef = useRef(false);
+  // Set when older bars are prepended, so the rebuild below holds the
+  // viewport still instead of fitting the whole (now longer) series.
+  const preserveViewRef = useRef(false);
+  const barCountRef = useRef(0);
+
+  const backfill = useCallback(async () => {
+    if (backfillingRef.current) return;
+    const held = historyRef.current;
+    if (!held || held.key !== historyKey || held.exhausted) return;
+
+    const end = held.from;
+    const start = new Date(end);
+    start.setUTCDate(end.getUTCDate() - lookbackDays(interval));
+    const from = floor && start < floor ? floor : start;
+    if (from >= end) return;
+
+    backfillingRef.current = true;
+    setBackfilling(true);
+    try {
+      const res = await fetchKBars({
+        instrument,
+        timeframe,
+        start: from,
+        end,
+        adjustment: "ratio",
+        limit: 50_000,
+      });
+      const now = historyRef.current;
+      // Superseded while in flight — drop the chunk rather than splicing it
+      // into a history it no longer belongs to.
+      if (!now || now.key !== held.key || now.from.getTime() !== end.getTime()) return;
+      preserveViewRef.current = true;
+      setHistory({
+        key: now.key,
+        bars: [...res.data, ...now.bars],
+        from,
+        // An empty chunk also ends it: coverage may be missing, and walking
+        // back forever through nothing is worse than stopping a bit early.
+        exhausted: res.data.length === 0 || (floor !== null && from <= floor),
+      });
+    } catch {
+      // A failed chunk is not fatal. Keep what is drawn; the next pan retries.
+    } finally {
+      backfillingRef.current = false;
+      setBackfilling(false);
+    }
+  }, [historyKey, interval, instrument, timeframe, floor]);
+
+  // The subscription is registered once, so it reaches the current callback
+  // through a ref — re-subscribing on every dependency change would drop
+  // range events during the swap.
+  const backfillRef = useRef(backfill);
+  backfillRef.current = backfill;
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const scale = chart.timeScale();
+    const onRange = (r: LogicalRange | null) => {
+      // `from` is a bar index into the series and goes negative once the
+      // user scrolls past the oldest bar.
+      if (r && r.from < BACKFILL_TRIGGER_BARS) void backfillRef.current();
+    };
+    scale.subscribeVisibleLogicalRangeChange(onRange);
+    return () => scale.unsubscribeVisibleLogicalRangeChange(onRange);
+  }, []);
+
+  // Span the overlay is evaluated over: the whole loaded history, not the
+  // first window, so backfilled bars carry their trades too. ISO strings
+  // rather than Dates keep the effect from re-firing on identity alone.
+  const evalSpan = useMemo(() => {
+    if (!range) return null;
+    const held = history?.key === historyKey ? history : null;
+    const start = held && held.from < range.start ? held.from : range.start;
+    return { start: start.toISOString(), end: range.end.toISOString() };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, history, historyKey]);
 
   // Evaluate the selected strategy over the same instrument/range the
   // chart is showing. Selecting a strategy forces the chart onto the
   // strategy's timeframe, so bar times and trade times line up exactly.
   useEffect(() => {
-    if (!strategyId || !range) {
+    if (!strategyId || !evalSpan) {
       setEvalResult(null);
       setEvalError(null);
       return;
@@ -338,8 +482,8 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     setEvalError(null);
     evaluateStrategy(strategyId, {
       instrument,
-      start: range.start.toISOString(),
-      end: range.end.toISOString(),
+      start: evalSpan.start,
+      end: evalSpan.end,
       adjustment: "ratio",
     })
       .then((res) => {
@@ -357,7 +501,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [strategyId, instrument, range]);
+  }, [strategyId, instrument, evalSpan]);
 
   function selectStrategy(id: string) {
     setStrategyId(id);
@@ -381,6 +525,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !bars) return;
+
+    // Read before the series are torn down and rebuilt.
+    const before = chart.timeScale().getVisibleLogicalRange();
 
     if (priceRef.current) chart.removeSeries(priceRef.current);
     for (const s of extraRef.current) chart.removeSeries(s);
@@ -416,7 +563,22 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           }))
         : [],
     );
-    chart.timeScale().fitContent();
+
+    // A backfill only prepends, so every bar the user was looking at simply
+    // moved right by however many arrived in front of it. Fitting here
+    // instead would yank the view back to the whole series on every chunk —
+    // which is exactly what made panning feel like it hit a wall.
+    const shift = bars.length - barCountRef.current;
+    if (preserveViewRef.current && before && shift > 0) {
+      chart.timeScale().setVisibleLogicalRange({
+        from: before.from + shift,
+        to: before.to + shift,
+      });
+    } else {
+      chart.timeScale().fitContent();
+    }
+    preserveViewRef.current = false;
+    barCountRef.current = bars.length;
   }, [bars, chartKind, zoomProvider]);
 
   // Price-pane overlays. Rebuilt wholesale whenever the bars or the active
@@ -537,7 +699,11 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
             <span className="text-zinc-400">{INSTRUMENT_META[instrument].exchange}</span>
           </span>
           <span>
-            {loading || evalLoading ? "Loading…" : bars ? `${bars.length} bars` : ""}
+            {loading || evalLoading
+              ? "Loading…"
+              : bars
+                ? `${bars.length} bars${backfilling ? " · loading history…" : ""}`
+                : ""}
           </span>
         </div>
       </div>
@@ -592,8 +758,8 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
                 No {timeframe} bars for {instrument}
               </p>
               <p className="mt-1 text-xs text-zinc-500">
-                {anchor?.iso
-                  ? `The backend's newest ${timeframe} bar for this instrument is ${anchor.iso
+                {anchor?.latest
+                  ? `The backend's newest ${timeframe} bar for this instrument is ${anchor.latest
                       .slice(0, 16)
                       .replace("T", " ")}Z. Try another timeframe.`
                   : "The backend has not ingested this instrument at this timeframe yet."}

@@ -109,16 +109,26 @@ async def _fetch_bars(
     end: datetime,
     limit: int,
 ) -> list[dict]:
-    """Query bars from the appropriate table or continuous aggregate view."""
+    """Query bars from the appropriate table or continuous aggregate view.
+
+    The limit takes the *newest* bars in the range, not the oldest. Ordering
+    ascending before the LIMIT truncated the recent end instead, which left
+    the chart drawing a window that stopped short of the data it asked for —
+    and, once the chart started backfilling history chunk by chunk, would
+    have punched a hole between a truncated chunk and the bars already held.
+    """
     stmt = text(
         f"""
-        SELECT ts, open::float, high::float, low::float, close::float, volume
-        FROM {source}
-        WHERE instrument = :instrument
-          AND ts >= :start
-          AND ts < :end
+        SELECT * FROM (
+            SELECT ts, open::float, high::float, low::float, close::float, volume
+            FROM {source}
+            WHERE instrument = :instrument
+              AND ts >= :start
+              AND ts < :end
+            ORDER BY ts DESC
+            LIMIT :limit
+        ) AS newest
         ORDER BY ts ASC
-        LIMIT :limit
         """  # noqa: S608 — source is from a hardcoded dict, not user input
     )
     result = await db.execute(

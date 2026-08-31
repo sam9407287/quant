@@ -56,6 +56,47 @@ def _mock_roll_row() -> MagicMock:
     return row
 
 
+def _sqlite_backed(table: str, bars: list[tuple[datetime, float]]):
+    """Execute the endpoint's real SQL against an in-memory SQLite table.
+
+    Asserting on the query string would only prove the SQL was *written* a
+    certain way; running it proves which rows come back. Postgres' `::float`
+    casts are the one dialect difference and are stripped.
+    """
+    import re
+    import sqlite3
+
+    con = sqlite3.connect(":memory:", check_same_thread=False)
+    con.execute(
+        f"CREATE TABLE {table} (instrument TEXT, ts TEXT, open REAL, "
+        "high REAL, low REAL, close REAL, volume INT)"
+    )
+    con.executemany(
+        f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [("NQ", ts.isoformat(), o, o + 50, o - 50, o + 20, 1000) for ts, o in bars],
+    )
+
+    cols = ("ts", "open", "high", "low", "close", "volume")
+
+    async def run(stmt, params):  # noqa: ANN001, ANN202
+        sql = re.sub(r"::float", "", str(stmt))
+        bound = {
+            k: (v.isoformat() if isinstance(v, datetime) else v)
+            for k, v in params.items()
+        }
+        rows = con.execute(sql, bound).fetchall()
+        out = []
+        for r in rows:
+            row = MagicMock()
+            row._mapping = dict(zip(cols, r, strict=True))
+            out.append(row)
+        result = MagicMock()
+        result.fetchall.return_value = out
+        return result
+
+    return run
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -156,6 +197,38 @@ class TestGetKbars:
         assert resp.status_code == 200
         # With raw adjustment, execute is called once (bars only, no rolls)
         assert mock_db.execute.call_count == 1
+
+    def test_limit_keeps_the_newest_bars_not_the_oldest(
+        self, client: TestClient, mock_db: AsyncMock
+    ) -> None:
+        """A range holding more bars than the limit returns its recent end.
+
+        Ordering ascending before the LIMIT truncated the *newest* bars, so
+        the chart silently stopped short of the data it asked for — and once
+        it began stitching history chunks together, a truncated chunk left a
+        hole between itself and the bars already drawn.
+        """
+        hours = [datetime(2024, 1, 1, h, tzinfo=UTC) for h in range(10)]
+        mock_db.execute.side_effect = _sqlite_backed(
+            "kbars_1h",
+            [(ts, 18000.0 + i) for i, ts in enumerate(hours)],
+        )
+
+        resp = client.get(
+            "/api/v1/kbars",
+            params={
+                "instrument": "NQ",
+                "timeframe": "1h",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-02T00:00:00Z",
+                "adjustment": "raw",
+                "limit": 3,
+            },
+        )
+        assert resp.status_code == 200
+        got = [datetime.fromisoformat(b["ts"]) for b in resp.json()["data"]]
+        # The last three hours, still ascending.
+        assert got == hours[-3:]
 
     def test_response_schema(
         self, client: TestClient, mock_db: AsyncMock
