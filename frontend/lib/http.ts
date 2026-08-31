@@ -19,9 +19,24 @@ export function clearIdToken(): void {
   window.dispatchEvent(new Event("gq-auth-changed"));
 }
 
+/**
+ * A service token supplied to a dev server, for driving the signed-in
+ * pages without a Google account (end-to-end testing).
+ *
+ * Guarded on NODE_ENV so a production build strips the branch and never
+ * carries the value — NEXT_PUBLIC_* is inlined into the bundle, which is
+ * fine for a local dev server and would not be fine for a shipped one.
+ * The backend half is off unless its own env var is set, so a token here
+ * alone opens nothing.
+ */
+export function devApiToken(): string | null {
+  if (process.env.NODE_ENV === "production") return null;
+  return process.env.NEXT_PUBLIC_DEV_API_TOKEN || null;
+}
+
 /** Headers for authenticated API calls; empty when signed out. */
 export function authHeaders(): Record<string, string> {
-  const token = getIdToken();
+  const token = getIdToken() ?? devApiToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -35,6 +50,9 @@ export function authHeaders(): Record<string, string> {
  */
 export async function apiError(path: string, res: Response): Promise<Error> {
   if (res.status === 401) {
+    if (devApiToken()) {
+      return new Error(`${path} → 401: the dev service token was rejected.`);
+    }
     clearIdToken();
     return new Error("登入已過期，請重新以 Google 登入後再試一次。");
   }

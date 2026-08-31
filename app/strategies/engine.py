@@ -241,6 +241,32 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
             if stop.active_from is not None:
                 orders_live &= sessions.since(stop.active_from)
 
+    # Every value the bar loop reads is pulled into a plain array first.
+    # `df.at[i, col]` and `series.iat[i]` cost a microsecond or so each, and
+    # the loop makes about ten of them per bar — which is the entire cost of
+    # a run: measured at 37 us/bar, ~6 minutes over ten million bars. Indexed
+    # against numpy the same reads are nanoseconds, leaving only the Python
+    # loop itself. Nothing about the logic changes; the values are identical.
+    # `ts` is the exception: materialising ten million Timestamp objects
+    # costs hundreds of megabytes, and only the handful of bars that open or
+    # close a trade ever need one. Index the array lazily instead — the
+    # value is identical to what `.at` returned, just built on demand.
+    ts_col = df["ts"].array
+    open_a = df["open"].to_numpy(dtype=float)
+    high_a = df["high"].to_numpy(dtype=float)
+    low_a = df["low"].to_numpy(dtype=float)
+    close_a = df["close"].to_numpy(dtype=float)
+    el_a = el.to_numpy(dtype=bool)
+    es_a = es.to_numpy(dtype=bool)
+    xl_a = xl.to_numpy(dtype=bool)
+    xs_a = xs.to_numpy(dtype=bool)
+    in_sess_a = sessions.in_session.to_numpy(dtype=bool) if sessions else None
+    sid_a = sessions.sid.to_numpy() if sessions else None
+    last_a = sessions.last_of_session.to_numpy(dtype=bool) if sessions else None
+    upper_a = upper.to_numpy(dtype=float) if upper is not None else None
+    lower_a = lower.to_numpy(dtype=float) if lower is not None else None
+    live_a = orders_live.to_numpy(dtype=bool) if orders_live is not None else None
+
     trades: list[Trade] = []
     pos_dir: Literal["long", "short"] | None = None
     entry_ts: datetime | None = None
@@ -263,10 +289,10 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
         nonlocal pos_dir, entry_ts, entry_price, entry_i, sl_level, tp_level
         pos_dir = direction
         entry_i = i
-        entry_ts = df.at[i, "ts"]
+        entry_ts = ts_col[i]
         # Signal entries fill at the bar's open; a resting order fills at
         # its own level somewhere inside the bar.
-        entry_price = float(df.at[i, "open"]) if price is None else price
+        entry_price = float(open_a[i]) if price is None else price
         sign = 1.0 if direction == "long" else -1.0
         sl_level = _bracket_level(entry_price, defn.sl, sign, -1.0)
         tp_level = _bracket_level(entry_price, defn.tp, sign, +1.0)
@@ -275,8 +301,7 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
         """Resolve SL/TP inside bar i. SL wins a bar that touches both."""
         if pos_dir is None or (sl_level is None and tp_level is None):
             return
-        ts = df.at[i, "ts"]
-        o, h, low = float(df.at[i, "open"]), float(df.at[i, "high"]), float(df.at[i, "low"])
+        o, h, low = float(open_a[i]), float(high_a[i]), float(low_a[i])
         sign = 1.0 if pos_dir == "long" else -1.0
         stop_hit = sl_level is not None and (low <= sl_level if sign > 0 else h >= sl_level)
         target_hit = tp_level is not None and (h >= tp_level if sign > 0 else low <= tp_level)
@@ -285,9 +310,9 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
             fill = sl_level
             if i > entry_i:  # gap-through opens fill at the open
                 fill = min(sl_level, o) if sign > 0 else max(sl_level, o)
-            close_position(ts, float(fill), "sl")
+            close_position(ts_col[i], float(fill), "sl")
         elif target_hit:
-            close_position(ts, float(tp_level), "tp")  # type: ignore[arg-type]
+            close_position(ts_col[i], float(tp_level), "tp")  # type: ignore[arg-type]
 
     pending: Literal["long", "short", "exit", "reverse_long", "reverse_short"] | None = None
 
@@ -303,12 +328,11 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
 
     n = len(df)
     for i in range(n):
-        ts = df.at[i, "ts"]
-        o, h, low = float(df.at[i, "open"]), float(df.at[i, "high"]), float(df.at[i, "low"])
-        in_session = sessions is None or bool(sessions.in_session.iat[i])
+        o, h, low = float(open_a[i]), float(high_a[i]), float(low_a[i])
+        in_session = in_sess_a is None or bool(in_sess_a[i])
 
-        if sessions is not None:
-            sid_i = sessions.sid.iat[i]
+        if sid_a is not None:
+            sid_i = sid_a[i]
             if sid_i != cur_sid:
                 cur_sid, sess_trades, sess_blocked, oco_filled = sid_i, 0, False, False
 
@@ -318,9 +342,9 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
         if pending is not None:
             may_enter = in_session and under_cap()
             if pending == "exit" and pos_dir is not None:
-                close_position(ts, o, "signal")
+                close_position(ts_col[i], o, "signal")
             elif pending in ("reverse_long", "reverse_short") and pos_dir is not None:
-                close_position(ts, o, "signal")
+                close_position(ts_col[i], o, "signal")
                 if may_enter:
                     open_position("long" if pending == "reverse_long" else "short", i)
                     sess_trades += 1
@@ -342,10 +366,10 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
             and not sess_blocked
             and not oco_filled
             and under_cap()
-            and bool(orders_live.iat[i])  # type: ignore[union-attr]
+            and bool(live_a[i])  # type: ignore[index]
         ):
-            up = float(upper.iat[i])  # type: ignore[union-attr]
-            lo = float(lower.iat[i])  # type: ignore[union-attr]
+            up = float(upper_a[i])  # type: ignore[index]
+            lo = float(lower_a[i])  # type: ignore[index]
             hit_up = up == up and h >= up  # NaN-safe: a NaN level is no order
             hit_lo = lo == lo and low <= lo
             if hit_up and hit_lo:
@@ -377,8 +401,8 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
                 check_brackets(i)
 
         # 4. Forced flat: a session position is never carried overnight.
-        if pos_dir is not None and sessions is not None and bool(sessions.last_of_session.iat[i]):
-            close_position(ts, float(df.at[i, "close"]), "eod")
+        if pos_dir is not None and last_a is not None and bool(last_a[i]):
+            close_position(ts_col[i], float(close_a[i]), "eod")
             pending = None
 
         # 5. Evaluate signals at this bar's close → schedule for i+1.
@@ -387,17 +411,17 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
         if not in_session:
             continue
         if pos_dir == "long":
-            if bool(es.iat[i]):
+            if es_a[i]:
                 pending = "reverse_short"
-            elif bool(xl.iat[i]):
+            elif xl_a[i]:
                 pending = "exit"
         elif pos_dir == "short":
-            if bool(el.iat[i]):
+            if el_a[i]:
                 pending = "reverse_long"
-            elif bool(xs.iat[i]):
+            elif xs_a[i]:
                 pending = "exit"
         else:
-            long_sig, short_sig = bool(el.iat[i]), bool(es.iat[i])
+            long_sig, short_sig = bool(el_a[i]), bool(es_a[i])
             if long_sig and not short_sig:
                 pending = "long"
             elif short_sig and not long_sig:
@@ -406,5 +430,5 @@ def evaluate(df: pd.DataFrame, defn: StrategyDefinition) -> list[Trade]:
 
     if pos_dir is not None:
         last = n - 1
-        close_position(df.at[last, "ts"], float(df.at[last, "close"]), "end")
+        close_position(ts_col[last], float(close_a[last]), "end")
     return trades

@@ -12,6 +12,7 @@ dependency instead of minting real Google tokens.
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException
@@ -76,20 +77,54 @@ async def _upsert_user(
     return CurrentUser(id=row.id, email=row.email, role=row.role, name=row.name, picture=row.picture)
 
 
+# A secret shorter than this is refused even when configured: the whole
+# safety of the service token is that it cannot be guessed, and a
+# placeholder like "test" left in an env var would be a back door.
+_MIN_SERVICE_TOKEN_LEN = 32
+
+
+def service_token_matches(token: str, configured: str) -> bool:
+    """Constant-time check of the presented token against the configured one."""
+    if not configured or len(configured) < _MIN_SERVICE_TOKEN_LEN:
+        return False
+    return secrets.compare_digest(token, configured)
+
+
+async def _upsert_service_user(db: AsyncSession, email: str, role: str) -> CurrentUser:
+    """The account the service token authenticates as.
+
+    Its own row, keyed by a synthetic `google_sub` no Google account can
+    collide with, so its strategies and runs are separable from a real
+    user's and it can be deleted on its own.
+    """
+    claims = GoogleClaims(sub=f"service-token:{email}", email=email, name="service token", picture=None)
+    return await _upsert_user(db, claims, role)
+
+
 async def get_current_user(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
     """Resolve the request's bearer token to a CurrentUser or 401/503."""
     settings = get_settings()
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+
+    # Checked before the Google path so an automated client works against a
+    # server with no OAuth client configured at all (a local backend, say).
+    if service_token_matches(token, settings.service_token):
+        return await _upsert_service_user(
+            db,
+            settings.service_token_email,
+            role_for(settings.service_token_email, settings.admin_emails),
+        )
+
     if not settings.google_oauth_client_id:
         raise HTTPException(
             status_code=503,
             detail="sign-in is not configured on this server (GOOGLE_OAUTH_CLIENT_ID unset)",
         )
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
-    token = authorization.removeprefix("Bearer ").strip()
     try:
         claims = verify_google_token(token, settings.google_oauth_client_id)
     except AuthError as e:

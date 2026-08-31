@@ -74,6 +74,18 @@ class Settings(BaseSettings):
     google_oauth_client_id: str = ""
     # Emails granted the admin role on sign-in (see-everything access).
     admin_emails: Annotated[list[str], NoDecode] = ["sam9407287@gmail.com"]
+    # Shared secret letting an automated client authenticate as a dedicated
+    # account, for end-to-end testing of the signed-in surface. Empty — the
+    # default — means the code path does not exist and Google is the only
+    # way in. Unsetting the variable revokes it; nothing else to undo.
+    #
+    # The account it maps to is an ORDINARY user, not an admin: everything
+    # worth testing (strategies, backtests, signal tests) works without
+    # admin, and a leaked secret then buys a sandbox rather than read/write
+    # over everyone's data. Add SERVICE_TOKEN_EMAIL to ADMIN_EMAILS if you
+    # ever deliberately want more.
+    service_token: str = ""
+    service_token_email: str = "service-bot@quant.local"
 
     # Notifications (optional — leave empty to disable)
     notify_webhook_url: str = ""

@@ -15,6 +15,7 @@ import {
 import {
   clearIdToken,
   decodeToken,
+  devApiToken,
   getIdToken,
   setIdToken,
   type TokenClaims,
@@ -35,6 +36,12 @@ export function useAuth(): AuthState {
 }
 
 function currentUser(): TokenClaims | null {
+  // A dev server started with a service token counts as signed in, or the
+  // pages behind RequireAuth would still be unreachable. Never true in a
+  // production build — devApiToken() returns null there.
+  if (devApiToken()) {
+    return { email: "service token", exp: Number.MAX_SAFE_INTEGER / 1000 };
+  }
   const token = getIdToken();
   if (!token) return null;
   const claims = decodeToken(token);

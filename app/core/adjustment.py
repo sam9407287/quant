@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+import numpy as np
+
 
 @dataclass(frozen=True, slots=True)
 class RollEvent:
@@ -137,6 +139,45 @@ def apply_absolute_adjustment(
                 }
             )
     return result
+
+
+def adjustment_offsets(
+    bar_dates: np.ndarray,
+    rolls: list[RollEvent],
+    method: str,
+) -> np.ndarray:
+    """Per-bar adjustment factor (ratio) or offset (absolute), vectorised.
+
+    Same rule as the list versions above — a bar strictly before roll *i*
+    carries the cumulative adjustment of rolls i..end — but resolved for
+    every bar at once with a binary search instead of a scan per bar.
+
+    The list versions stay as they are: they serve the chart endpoint, whose
+    50 000-bar ceiling makes their cost irrelevant, and they are the
+    reference this is checked against. A backtest over ten million bars is
+    where the per-bar `Decimal(str(x))` work stopped being affordable.
+    """
+    identity = 1.0 if method == "ratio" else 0.0
+    n = len(bar_dates)
+    if not rolls:
+        return np.full(n, identity)
+
+    ordered = sorted(rolls, key=lambda r: r.roll_date)
+    roll_dates = np.array([r.roll_date for r in ordered], dtype="datetime64[D]")
+    steps = np.array(
+        [float(r.price_ratio if method == "ratio" else r.price_diff) for r in ordered]
+    )
+    # cumulative[i] = the adjustment a bar before roll i must carry, i.e.
+    # the product (or sum) of steps i..end. Reversed cumulate, reversed back.
+    cumulative = (
+        np.cumprod(steps[::-1])[::-1] if method == "ratio" else np.cumsum(steps[::-1])[::-1]
+    )
+
+    # First roll strictly LATER than the bar; `right` is what makes it
+    # strict, matching `if bar_date < roll.roll_date` above. Bars at or
+    # after the last roll get the identity.
+    idx = np.searchsorted(roll_dates, bar_dates.astype("datetime64[D]"), side="right")
+    return np.where(idx < len(ordered), cumulative[np.minimum(idx, len(ordered) - 1)], identity)
 
 
 # ---------------------------------------------------------------------------

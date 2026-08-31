@@ -5,8 +5,10 @@ These tests are pure — no database or network calls.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+
+import pytest
 
 from app.core.adjustment import (
     RollEvent,
@@ -156,3 +158,82 @@ class TestTsVariants:
         bar = {"ts": "2024-01-05T09:00:00+00:00", "open": 18000, "high": 18100, "low": 17900, "close": 18050, "volume": 1}
         result = apply_ratio_adjustment([bar], rolls=[ROLL_A])
         assert result[0]["open"] != 18000
+
+
+class TestVectorisedMatchesReference:
+    """`adjustment_offsets` must agree with the per-bar Decimal versions.
+
+    Two implementations of one rule is a drift risk; the backtest loader
+    uses the fast one and the chart endpoint the reference one, so a
+    divergence would silently mean the chart and the strategy that trades
+    it disagree about what price a bar had.
+    """
+
+    @staticmethod
+    def _bars(n: int, seed: int) -> list[dict]:
+        import numpy as np
+
+        rng = np.random.default_rng(seed)
+        base = datetime(2020, 1, 1, tzinfo=UTC)
+        px = 15000 + np.cumsum(rng.normal(0, 7, n))
+        return [
+            {
+                "ts": base + timedelta(hours=int(i)),
+                "open": round(float(px[i]) + 0.25, 4),
+                "high": round(float(px[i]) + 3.75, 4),
+                "low": round(float(px[i]) - 2.5, 4),
+                "close": round(float(px[i]), 4),
+                "volume": 10,
+            }
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _rolls(n: int) -> list[RollEvent]:
+        return [
+            RollEvent(
+                instrument="NQ",
+                roll_date=date(2020, 1, 1) + timedelta(days=40 * k + 17),
+                price_diff=Decimal("37.25") + Decimal(k),
+                price_ratio=Decimal("1.0031") + Decimal(k) / Decimal("10000"),
+            )
+            for k in range(n)
+        ]
+
+    @pytest.mark.parametrize("method", ["ratio", "absolute"])
+    @pytest.mark.parametrize("n_rolls", [0, 1, 5])
+    def test_every_bar_matches_the_reference(self, method: str, n_rolls: int) -> None:
+        import numpy as np
+
+        from app.core.adjustment import adjustment_offsets
+
+        bars = self._bars(4000, seed=n_rolls + 1)
+        rolls = self._rolls(n_rolls)
+        apply = apply_ratio_adjustment if method == "ratio" else apply_absolute_adjustment
+        reference = apply(bars, rolls)
+
+        dates = np.array([b["ts"] for b in bars], dtype="datetime64[ns]")
+        factors = adjustment_offsets(dates, rolls, method)
+        for col in ("open", "high", "low", "close"):
+            values = np.array([b[col] for b in bars], dtype=float)
+            fast = np.round(values * factors if method == "ratio" else values + factors, 4)
+            expected = np.array([float(b[col]) for b in reference], dtype=float)
+            assert np.array_equal(fast, expected), f"{method}/{col} diverged"
+
+    def test_a_bar_exactly_on_a_roll_date_is_not_adjusted(self) -> None:
+        """The boundary the two implementations could most easily disagree on."""
+        import numpy as np
+
+        from app.core.adjustment import adjustment_offsets
+
+        roll = RollEvent(
+            instrument="NQ", roll_date=date(2020, 3, 15),
+            price_diff=Decimal("50"), price_ratio=Decimal("1.01"),
+        )
+        dates = np.array(
+            ["2020-03-14T23:00", "2020-03-15T00:00", "2020-03-15T23:00", "2020-03-16T00:00"],
+            dtype="datetime64[ns]",
+        )
+        got = adjustment_offsets(dates, [roll], "ratio")
+        # Strictly before the roll date is adjusted; on it and after is not.
+        assert got.tolist() == [1.01, 1.0, 1.0, 1.0]

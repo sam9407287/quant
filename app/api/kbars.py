@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -101,15 +101,8 @@ async def get_kbars(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-async def _fetch_bars(
-    db: AsyncSession,
-    source: str,
-    instrument: str,
-    start: datetime,
-    end: datetime,
-    limit: int,
-) -> list[dict]:
-    """Query bars from the appropriate table or continuous aggregate view.
+def bars_stmt(source: str) -> Any:
+    """The bar query, shared so every reader selects the same rows.
 
     The limit takes the *newest* bars in the range, not the oldest. Ordering
     ascending before the LIMIT truncated the recent end instead, which left
@@ -117,7 +110,7 @@ async def _fetch_bars(
     and, once the chart started backfilling history chunk by chunk, would
     have punched a hole between a truncated chunk and the bars already held.
     """
-    stmt = text(
+    return text(
         f"""
         SELECT * FROM (
             SELECT ts, open::float, high::float, low::float, close::float, volume
@@ -131,8 +124,19 @@ async def _fetch_bars(
         ORDER BY ts ASC
         """  # noqa: S608 — source is from a hardcoded dict, not user input
     )
+
+
+async def _fetch_bars(
+    db: AsyncSession,
+    source: str,
+    instrument: str,
+    start: datetime,
+    end: datetime,
+    limit: int,
+) -> list[dict]:
+    """Query bars as dicts — the chart endpoint's shape."""
     result = await db.execute(
-        stmt,
+        bars_stmt(source),
         {"instrument": instrument, "start": start, "end": end, "limit": limit},
     )
     return [dict(row._mapping) for row in result.fetchall()]

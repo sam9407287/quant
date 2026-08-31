@@ -116,6 +116,22 @@ class TestBacktestDateResolution:
             _params(start=date(2026, 6, 30), end=date(2026, 6, 1))
 
 
+def _streaming_db(rows: list[tuple], partition: int = 2) -> AsyncMock:
+    """A db whose `stream()` yields `rows` in partitions, like the driver."""
+
+    class _Result:
+        async def partitions(self, size: int):  # noqa: ANN202
+            for i in range(0, len(rows), partition):
+                yield rows[i : i + partition]
+
+        async def close(self) -> None:
+            return None
+
+    db = AsyncMock()
+    db.stream.return_value = _Result()
+    return db
+
+
 class TestLoaderCap:
     """The cap bounds a runaway request; it must never quietly shrink a run.
 
@@ -131,14 +147,8 @@ class TestLoaderCap:
         from app.strategies import loader
 
         monkeypatch.setattr(loader, "MAX_BARS", 3)
-        db = AsyncMock()
-        result = MagicMock()
-        result.fetchall.return_value = [
-            MagicMock(_mapping={"ts": LO, "open": 1.0, "high": 2.0,
-                                "low": 0.5, "close": 1.5, "volume": 10})
-            for _ in range(4)
-        ]
-        db.execute.return_value = result
+        # Real driver rows are tuples in the SELECT's column order.
+        db = _streaming_db([(LO, 1.0, 2.0, 0.5, 1.5, 10)] * 4)
 
         with pytest.raises(ValueError, match="more than 3"):
             await loader.load_bars_df(db, "NQ", "1h", LO, HI, "raw")
@@ -148,16 +158,22 @@ class TestLoaderCap:
         from app.strategies import loader
 
         monkeypatch.setattr(loader, "MAX_BARS", 3)
-        db = AsyncMock()
-        result = MagicMock()
-        result.fetchall.return_value = [
-            MagicMock(_mapping={"ts": LO, "open": 1.0, "high": 2.0,
-                                "low": 0.5, "close": 1.5, "volume": 10})
-            for _ in range(3)
-        ]
-        db.execute.return_value = result
+        db = _streaming_db([(LO, 1.0, 2.0, 0.5, 1.5, 10)] * 3)
 
         assert len(await loader.load_bars_df(db, "NQ", "1h", LO, HI, "raw")) == 3
+
+    @pytest.mark.asyncio
+    async def test_partitions_are_stitched_back_in_order(self) -> None:
+        """Streaming must not reorder or drop bars at a partition boundary."""
+        from app.strategies import loader
+
+        rows = [
+            (LO.replace(minute=m), float(m), float(m) + 2, float(m) - 2, float(m) + 1, m)
+            for m in range(7)
+        ]
+        df = await loader.load_bars_df(_streaming_db(rows, partition=2), "NQ", "1h", LO, HI, "raw")
+        assert df["close"].tolist() == [m + 1 for m in range(7)]
+        assert df["ts"].tolist() == [r[0] for r in rows]
 
 
 class TestEvaluateEndpointWiring:

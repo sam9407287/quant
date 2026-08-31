@@ -70,3 +70,7 @@ logs/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+
+# Service token for automated end-to-end testing (see docs/auth).
+# Generated locally; never committed and never printed.
+.service-token.local
