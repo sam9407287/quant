@@ -58,8 +58,12 @@ class BacktestParams(BaseModel):
     # adjustable per the 2026-07-19 decision (future position sizing).
     point_value_usd: float = Field(default=2.0, gt=0)
     contracts: int = Field(default=1, ge=1)
-    start: date
-    end: date
+    # Optional: each edge left unset means "as far as the stored 1m bars
+    # go". The API resolves them to concrete dates before the run is
+    # persisted, so a saved run still records exactly what it covered —
+    # "everything" is a request, not a reproducible span.
+    start: date | None = None
+    end: date | None = None
 
     clock: SessionClock
 
@@ -84,11 +88,25 @@ class BacktestParams(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> BacktestParams:
-        if self.end < self.start:
+        if self.start is not None and self.end is not None and self.end < self.start:
             raise ValueError("end date must be >= start date")
         if self.tp_points is None and self.rrr is None:
             raise ValueError("either rrr or tp_points must be set")
         return self
+
+    @property
+    def span(self) -> tuple[date, date]:
+        """The date range this run covers, once resolved.
+
+        `start`/`end` are optional in the request so a caller can ask for
+        "every stored bar" without knowing how far back the data goes; the
+        API fills them in from the bars before anything runs. Everything
+        downstream reads the span through here, so a path that forgot to
+        resolve fails loudly instead of running over a silently wrong range.
+        """
+        if self.start is None or self.end is None:
+            raise ValueError("backtest span was never resolved against stored bars")
+        return self.start, self.end
 
     @property
     def uses_atr(self) -> bool:

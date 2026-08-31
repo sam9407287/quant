@@ -48,10 +48,20 @@ function defaultDates(): { start: string; end: string } {
   };
 }
 
+/**
+ * Whether to score every stored bar rather than a hand-picked window.
+ *
+ * On by default: a run over an arbitrary two months says much less than one
+ * over the whole record, and sending no dates means the run keeps covering
+ * everything as more history is ingested — nothing here has to know how far
+ * back the data goes. The date inputs stay for deliberately narrowing it.
+ */
+
 export function BacktestWorkbench() {
   const dates = defaultDates();
   // ── Universe ────────────────────────────────────────────────────
   const [instrument, setInstrument] = useState<Instrument>("NQ");
+  const [allData, setAllData] = useState(true);
   const [start, setStart] = useState(dates.start);
   const [end, setEnd] = useState(dates.end);
   const [pointValue, setPointValue] = useState(2); // MNQ $/pt
@@ -89,8 +99,8 @@ export function BacktestWorkbench() {
       instrument,
       point_value_usd: pointValue,
       contracts,
-      start,
-      end,
+      start: allData ? null : start,
+      end: allData ? null : end,
       clock: {
         tz,
         range_start: rangeStart,
@@ -148,11 +158,23 @@ export function BacktestWorkbench() {
           </div>
           <div>
             <label className={LABEL_CLASS}>Start</label>
-            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={INPUT_CLASS} />
+            <input
+              type="date"
+              value={start}
+              disabled={allData}
+              onChange={(e) => setStart(e.target.value)}
+              className={`${INPUT_CLASS} disabled:opacity-40`}
+            />
           </div>
           <div>
             <label className={LABEL_CLASS}>End</label>
-            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={INPUT_CLASS} />
+            <input
+              type="date"
+              value={end}
+              disabled={allData}
+              onChange={(e) => setEnd(e.target.value)}
+              className={`${INPUT_CLASS} disabled:opacity-40`}
+            />
           </div>
           <div>
             <label className={LABEL_CLASS}>Point value $</label>
@@ -163,6 +185,16 @@ export function BacktestWorkbench() {
             <input type="number" min={1} value={contracts} onChange={(e) => setContracts(Number(e.target.value))} className={INPUT_CLASS} />
           </div>
         </div>
+        <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-zinc-400">
+          <input
+            type="checkbox"
+            checked={allData}
+            onChange={(e) => setAllData(e.target.checked)}
+            className="h-3.5 w-3.5 accent-accent-blue"
+          />
+          Use every stored bar — ignore the dates above and cover the whole
+          record, including history added later
+        </label>
       </section>
 
       <section className={SECTION_CLASS}>
@@ -265,8 +297,8 @@ export function BacktestWorkbench() {
         </button>
         {result && (
           <span className="font-mono text-xs text-zinc-500">
-            {result.metrics.session_count} sessions · {result.runtime_ms} ms ·
-            run {result.run_id.slice(0, 8)}
+            {result.start} → {result.end} · {result.metrics.session_count} sessions ·{" "}
+            {result.runtime_ms} ms · run {result.run_id.slice(0, 8)}
           </span>
         )}
       </div>

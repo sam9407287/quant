@@ -124,6 +124,9 @@ export function SignalTestPanel() {
   const [strategies, setStrategies] = useState<StrategyRecord[]>([]);
   const [strategyId, setStrategyId] = useState("");
   const [instrument, setInstrument] = useState<Instrument>("NQ");
+  // Default to the whole record — see the backtest form for why. The date
+  // inputs stay for deliberately narrowing a test.
+  const [allData, setAllData] = useState(true);
   const [start, setStart] = useState(dates.start);
   const [end, setEnd] = useState(dates.end);
   const [horizon, setHorizon] = useState(21);
@@ -150,8 +153,12 @@ export function SignalTestPanel() {
       setResult(
         await signalTestStrategy(strategyId, {
           instrument,
-          start: new Date(start).toISOString(),
-          end: new Date(end).toISOString(),
+          ...(allData
+            ? {}
+            : {
+                start: new Date(start).toISOString(),
+                end: new Date(end).toISOString(),
+              }),
           horizon,
           adjustment: "ratio",
         }),
@@ -190,17 +197,26 @@ export function SignalTestPanel() {
           </div>
           <div>
             <label className={LABEL}>Start</label>
-            <input type="date" className={INPUT} value={start} onChange={(e) => setStart(e.target.value)} />
+            <input type="date" className={`${INPUT} disabled:opacity-40`} value={start} disabled={allData} onChange={(e) => setStart(e.target.value)} />
           </div>
           <div>
             <label className={LABEL}>End</label>
-            <input type="date" className={INPUT} value={end} onChange={(e) => setEnd(e.target.value)} />
+            <input type="date" className={`${INPUT} disabled:opacity-40`} value={end} disabled={allData} onChange={(e) => setEnd(e.target.value)} />
           </div>
           <div>
             <label className={LABEL}>Horizon (bars)</label>
             <input type="number" min={1} max={250} className={INPUT} value={horizon} onChange={(e) => setHorizon(Number(e.target.value))} />
           </div>
         </div>
+        <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-zinc-400">
+          <input
+            type="checkbox"
+            checked={allData}
+            onChange={(e) => setAllData(e.target.checked)}
+            className="h-3.5 w-3.5 accent-accent-blue"
+          />
+          Use every stored bar — ignore the dates above and cover the whole record
+        </label>
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -242,6 +258,8 @@ export function SignalTestPanel() {
               <Tile label="Best / worst" value={`${result.best_return_pct.toFixed(1)} / ${result.worst_return_pct.toFixed(1)}%`} />
             </div>
             <p className="text-xs text-zinc-500">
+              {result.bar_count.toLocaleString()} bars scored,{" "}
+              {result.start.slice(0, 10)} → {result.end.slice(0, 10)}.{" "}
               Win rate is the share of signals positive at day {result.horizon}.
               A near-straight, rising path means the edge is persistent; if the
               mean and median are close, outliers aren&apos;t distorting it.

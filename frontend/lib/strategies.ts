@@ -140,9 +140,20 @@ export interface StrategyMetrics {
   worst_trade_points: number;
 }
 
+/** A range omitted from the request means "every bar the backend holds". */
+export interface EvaluateRange {
+  instrument: string;
+  start?: string;
+  end?: string;
+  adjustment?: string;
+}
+
 export interface EvaluateResponse {
   strategy_id: string;
   timeframe: Timeframe;
+  /** Span actually scored — the backend resolves an omitted edge. */
+  start: string;
+  end: string;
   bar_count: number;
   trades: StrategyTrade[];
   metrics: StrategyMetrics;
@@ -152,6 +163,8 @@ export interface EvaluateResponse {
 export interface SignalTestResponse {
   strategy_id: string;
   timeframe: Timeframe;
+  start: string;
+  end: string;
   bar_count: number;
   signal_count: number;
   horizon: number;
@@ -242,7 +255,7 @@ export function markAccessSeen(): Promise<{ pending_count: number }> {
 
 export function evaluateStrategy(
   id: string,
-  body: { instrument: string; start: string; end: string; adjustment?: string },
+  body: EvaluateRange,
 ): Promise<EvaluateResponse> {
   return request(`/api/v1/strategies/${id}/evaluate`, {
     method: "POST",
@@ -252,13 +265,7 @@ export function evaluateStrategy(
 
 export function signalTestStrategy(
   id: string,
-  body: {
-    instrument: string;
-    start: string;
-    end: string;
-    horizon: number;
-    adjustment?: string;
-  },
+  body: EvaluateRange & { horizon: number },
 ): Promise<SignalTestResponse> {
   return request(`/api/v1/strategies/${id}/signal-test`, {
     method: "POST",

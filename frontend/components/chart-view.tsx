@@ -65,6 +65,8 @@ interface History {
   bars: KBar[];
   /** Earliest instant already requested — the next chunk ends here. */
   from: Date;
+  /** Newest instant requested; `until - from` is the span loaded so far. */
+  until: Date;
   /** Nothing older than `from` exists; stop asking. */
   exhausted: boolean;
 }
@@ -75,6 +77,27 @@ interface History {
  * the wall never becomes visible.
  */
 const BACKFILL_TRIGGER_BARS = 30;
+
+/** Largest chunk that stays under the endpoint's own 50 000-bar ceiling. */
+function chunkCeilingDays(interval: Interval): number {
+  const barsPerDay = 1440 / NATIVE_MINUTES[interval.base];
+  return Math.max(1, Math.floor(45_000 / barsPerDay));
+}
+
+/**
+ * Days of history the next chunk should reach for.
+ *
+ * Fixed-size chunks are technically enough to reach the start of the data,
+ * but at 1m that is a two-day step through months of bars — dozens of pans
+ * to get anywhere. Each chunk instead spans what is already loaded, so the
+ * history doubles every fetch and a handful of pans reaches the beginning
+ * however much the backend ends up holding.
+ */
+function chunkDays(interval: Interval, held: History): number {
+  const loaded = (held.until.getTime() - held.from.getTime()) / 86_400_000;
+  const want = Math.max(lookbackDays(interval), Math.round(loaded));
+  return Math.min(want, chunkCeilingDays(interval));
+}
 
 function toUtcSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -232,7 +255,19 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: "#262b36" },
-      timeScale: { borderColor: "#262b36", timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderColor: "#262b36",
+        timeVisible: true,
+        secondsVisible: false,
+        // The library's default floor of 0.5px per bar caps how far the
+        // chart can zoom out at (plot width / 0.5) bars — about 2 500 here,
+        // regardless of how many are loaded. That is a hard wall you hit by
+        // scrolling out, and it reads exactly like "the chart only ever
+        // shows a fixed number of candles". Dropped low enough that the
+        // whole record fits however large it grows; a year of 1m bars is
+        // ~370 000, and even that stays above this floor.
+        minBarSpacing: 0.001,
+      },
       autoSize: true,
     });
     // The price series is created by the rebuild effect below, because it
@@ -361,6 +396,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           key: historyKey,
           bars: res.data,
           from: range.start,
+          until: range.end,
           exhausted: floor !== null && range.start <= floor,
         });
       })
@@ -371,7 +407,13 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         // stale rejection must never overwrite the newer request's state.
         if (superseded || controller.signal.aborted) return;
         setError(e instanceof Error ? e.message : String(e));
-        setHistory({ key: historyKey, bars: [], from: range.start, exhausted: true });
+        setHistory({
+          key: historyKey,
+          bars: [],
+          from: range.start,
+          until: range.end,
+          exhausted: true,
+        });
       })
       .finally(() => {
         if (!superseded) setLoading(false);
@@ -393,22 +435,20 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   // Set when older bars are prepended, so the rebuild below holds the
   // viewport still instead of fitting the whole (now longer) series.
   const preserveViewRef = useRef(false);
-  const barCountRef = useRef(0);
 
-  const backfill = useCallback(async () => {
-    if (backfillingRef.current) return;
-    const held = historyRef.current;
-    if (!held || held.key !== historyKey || held.exhausted) return;
+  /**
+   * Fetch the chunk immediately older than `held` and return the extended
+   * history, or null if there is nothing to add. Pure with respect to
+   * component state so both the pan trigger and "load all" can drive it.
+   */
+  const fetchOlder = useCallback(
+    async (held: History): Promise<History | null> => {
+      const end = held.from;
+      const start = new Date(end);
+      start.setUTCDate(end.getUTCDate() - chunkDays(interval, held));
+      const from = floor && start < floor ? floor : start;
+      if (from >= end) return null;
 
-    const end = held.from;
-    const start = new Date(end);
-    start.setUTCDate(end.getUTCDate() - lookbackDays(interval));
-    const from = floor && start < floor ? floor : start;
-    if (from >= end) return;
-
-    backfillingRef.current = true;
-    setBackfilling(true);
-    try {
       const res = await fetchKBars({
         instrument,
         timeframe,
@@ -417,26 +457,87 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         adjustment: "ratio",
         limit: 50_000,
       });
+      return {
+        key: held.key,
+        bars: [...res.data, ...held.bars],
+        from,
+        until: held.until,
+        // An empty chunk also ends it: coverage may lag the bars, and
+        // walking back forever through nothing is worse than stopping a
+        // little early.
+        exhausted: res.data.length === 0 || (floor !== null && from <= floor),
+      };
+    },
+    [interval, instrument, timeframe, floor],
+  );
+
+  /** True while `held` is still the history on screen. */
+  const stillCurrent = useCallback(
+    (held: History) => {
       const now = historyRef.current;
+      return (
+        now !== null &&
+        now.key === held.key &&
+        now.key === historyKey &&
+        now.from.getTime() === held.from.getTime()
+      );
+    },
+    [historyKey],
+  );
+
+  const backfill = useCallback(async () => {
+    if (backfillingRef.current) return;
+    const held = historyRef.current;
+    if (!held || held.key !== historyKey || held.exhausted) return;
+
+    backfillingRef.current = true;
+    setBackfilling(true);
+    try {
+      const next = await fetchOlder(held);
       // Superseded while in flight — drop the chunk rather than splicing it
       // into a history it no longer belongs to.
-      if (!now || now.key !== held.key || now.from.getTime() !== end.getTime()) return;
+      if (!next || !stillCurrent(held)) return;
       preserveViewRef.current = true;
-      setHistory({
-        key: now.key,
-        bars: [...res.data, ...now.bars],
-        from,
-        // An empty chunk also ends it: coverage may be missing, and walking
-        // back forever through nothing is worse than stopping a bit early.
-        exhausted: res.data.length === 0 || (floor !== null && from <= floor),
-      });
+      historyRef.current = next;
+      setHistory(next);
     } catch {
       // A failed chunk is not fatal. Keep what is drawn; the next pan retries.
     } finally {
       backfillingRef.current = false;
       setBackfilling(false);
     }
-  }, [historyKey, interval, instrument, timeframe, floor]);
+  }, [historyKey, fetchOlder, stillCurrent]);
+
+  /**
+   * Pull chunks until the backend has nothing older.
+   *
+   * Panning already extends the history a chunk at a time, but "show me
+   * everything you have" is a thing people want to ask for outright rather
+   * than by dragging until it stops moving. The loop rides `historyRef`
+   * forward itself instead of waiting for React to commit each step, so the
+   * fetches queue back to back while the chart repaints between them.
+   */
+  const loadAll = useCallback(async () => {
+    if (backfillingRef.current) return;
+    backfillingRef.current = true;
+    setBackfilling(true);
+    try {
+      let held = historyRef.current;
+      while (held && held.key === historyKey && !held.exhausted) {
+        const next = await fetchOlder(held);
+        if (!next || !stillCurrent(held)) break;
+        preserveViewRef.current = true;
+        historyRef.current = next;
+        setHistory(next);
+        held = next;
+      }
+    } catch {
+      // Keep whatever landed; the button stays available to resume.
+    } finally {
+      backfillingRef.current = false;
+      setBackfilling(false);
+    }
+  }, [historyKey, fetchOlder, stillCurrent]);
 
   // The subscription is registered once, so it reaches the current callback
   // through a ref — re-subscribing on every dependency change would drop
@@ -457,22 +558,15 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     return () => scale.unsubscribeVisibleLogicalRangeChange(onRange);
   }, []);
 
-  // Span the overlay is evaluated over: the whole loaded history, not the
-  // first window, so backfilled bars carry their trades too. ISO strings
-  // rather than Dates keep the effect from re-firing on identity alone.
-  const evalSpan = useMemo(() => {
-    if (!range) return null;
-    const held = history?.key === historyKey ? history : null;
-    const start = held && held.from < range.start ? held.from : range.start;
-    return { start: start.toISOString(), end: range.end.toISOString() };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, history, historyKey]);
-
-  // Evaluate the selected strategy over the same instrument/range the
-  // chart is showing. Selecting a strategy forces the chart onto the
-  // strategy's timeframe, so bar times and trade times line up exactly.
+  // Evaluate the selected strategy over EVERY stored bar, not the window
+  // on screen: the trades and metrics are a property of the strategy, not
+  // of how far the user happens to have scrolled. Sending no range asks the
+  // backend to resolve it against the table, so this keeps covering
+  // everything as more history is ingested. Markers outside the loaded
+  // bars simply do not draw yet. Selecting a strategy forces the chart onto
+  // the strategy's timeframe, so bar times and trade times line up exactly.
   useEffect(() => {
-    if (!strategyId || !evalSpan) {
+    if (!strategyId) {
       setEvalResult(null);
       setEvalError(null);
       return;
@@ -480,12 +574,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     let cancelled = false;
     setEvalLoading(true);
     setEvalError(null);
-    evaluateStrategy(strategyId, {
-      instrument,
-      start: evalSpan.start,
-      end: evalSpan.end,
-      adjustment: "ratio",
-    })
+    evaluateStrategy(strategyId, { instrument, adjustment: "ratio" })
       .then((res) => {
         if (!cancelled) setEvalResult(res);
       })
@@ -501,7 +590,7 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [strategyId, instrument, evalSpan]);
+  }, [strategyId, instrument]);
 
   function selectStrategy(id: string) {
     setStrategyId(id);
@@ -526,8 +615,13 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     const chart = chartRef.current;
     if (!chart || !bars) return;
 
-    // Read before the series are torn down and rebuilt.
-    const before = chart.timeScale().getVisibleLogicalRange();
+    // Read before the series are torn down and rebuilt. A *time* range
+    // rather than a bar-index one: the sixteen chart types do not all draw
+    // one point per bar — Renko, Kagi, range bars and 3-line break rewrite
+    // the x-axis entirely — so "shift the view by N bars" only holds for
+    // the 1:1 types. The window the user is looking at is the same stretch
+    // of clock either way.
+    const before = chart.timeScale().getVisibleRange();
 
     if (priceRef.current) chart.removeSeries(priceRef.current);
     for (const s of extraRef.current) chart.removeSeries(s);
@@ -564,21 +658,16 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
         : [],
     );
 
-    // A backfill only prepends, so every bar the user was looking at simply
-    // moved right by however many arrived in front of it. Fitting here
-    // instead would yank the view back to the whole series on every chunk —
-    // which is exactly what made panning feel like it hit a wall.
-    const shift = bars.length - barCountRef.current;
-    if (preserveViewRef.current && before && shift > 0) {
-      chart.timeScale().setVisibleLogicalRange({
-        from: before.from + shift,
-        to: before.to + shift,
-      });
+    // A backfill only adds bars *older* than the ones on screen, so the
+    // stretch of time the user is looking at is untouched — put it back.
+    // Fitting here instead would yank the view out to the whole series on
+    // every chunk, which is what made panning feel like it hit a wall.
+    if (preserveViewRef.current && before) {
+      chart.timeScale().setVisibleRange(before);
     } else {
       chart.timeScale().fitContent();
     }
     preserveViewRef.current = false;
-    barCountRef.current = bars.length;
   }, [bars, chartKind, zoomProvider]);
 
   // Price-pane overlays. Rebuilt wholesale whenever the bars or the active
@@ -705,6 +794,20 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
                 ? `${bars.length} bars${backfilling ? " · loading history…" : ""}`
                 : ""}
           </span>
+          {/* Panning already pulls history a chunk at a time; this is for
+              asking outright rather than dragging until the chart stops
+              moving. It disappears once the backend has nothing older. */}
+          {history && !history.exhausted && !loading && (
+            <button
+              type="button"
+              onClick={loadAll}
+              disabled={backfilling}
+              title="Fetch every older bar the backend holds at this timeframe"
+              className="rounded border border-border px-2 py-0.5 font-mono text-[11px] text-zinc-400 transition hover:border-accent-blue hover:text-accent-blue disabled:opacity-40"
+            >
+              Load all history
+            </button>
+          )}
         </div>
       </div>
 

@@ -560,6 +560,40 @@ class TestStrategiesAPI:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_omitting_the_range_covers_every_stored_bar(
+        self, session: AsyncSession
+    ) -> None:
+        """No start/end → the whole table, last bar included.
+
+        The half-open fetch interval makes the newest bar the easy one to
+        lose here, so the count is what this asserts.
+        """
+        from app.main import app
+
+        df = validate(_make_bars("NQ", n=5))
+        await upsert_bars(session, df, "NQ", "test")
+
+        _override_auth(app, session, await _mk_user(session, "admin@test.io", "admin"))
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                sid = (await client.post("/api/v1/strategies", json=_STRATEGY_BODY)).json()["id"]
+                ev = await client.post(
+                    f"/api/v1/strategies/{sid}/evaluate",
+                    json={"instrument": "NQ", "adjustment": "raw"},
+                )
+                assert ev.status_code == 200, ev.text
+                body = ev.json()
+                assert body["bar_count"] == 5
+                # The resolved span is echoed back so the caller can say what
+                # was covered rather than guess.
+                assert body["start"] <= df["ts"].min().isoformat()
+                assert body["end"] > df["ts"].max().isoformat()
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_evaluate_missing_strategy_and_empty_range(
         self, session: AsyncSession
     ) -> None:

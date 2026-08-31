@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.kbars import _TIMEFRAME_SOURCE, bars_span
 from app.auth.dependency import CurrentUser, get_current_user
 from app.backtest.analysis import equity_curve, summarize
 from app.backtest.types import DayResult
@@ -91,9 +92,17 @@ class MetricsPoints(BaseModel):
 
 
 class EvaluateRequest(BaseModel):
+    """A run over stored bars.
+
+    `start`/`end` are optional and each default to the corresponding edge of
+    what the database holds at the strategy's timeframe. Omitting both means
+    "score every bar there is", and keeps meaning that as more history is
+    ingested — the caller never has to know how far back the data goes.
+    """
+
     instrument: Instrument
-    start: datetime
-    end: datetime
+    start: datetime | None = None
+    end: datetime | None = None
     adjustment: Literal["raw", "ratio", "absolute"] = "ratio"
 
 
@@ -105,6 +114,10 @@ class EquityPointModel(BaseModel):
 class EvaluateResponse(BaseModel):
     strategy_id: str
     timeframe: str
+    # Resolved span — echoed back so a caller that omitted the range can
+    # state what was actually covered instead of guessing.
+    start: datetime
+    end: datetime
     bar_count: int
     trades: list[TradeModel]
     metrics: MetricsPoints
@@ -121,6 +134,8 @@ class SignalTestResponse(BaseModel):
 
     strategy_id: str
     timeframe: str
+    start: datetime
+    end: datetime
     bar_count: int
     signal_count: int
     horizon: int
@@ -132,6 +147,31 @@ class SignalTestResponse(BaseModel):
     worst_return_pct: float
     avg_path_pct: list[float]
     distribution: list[dict[str, float]]  # {center, count}
+
+
+async def _resolve_span(
+    db: AsyncSession,
+    timeframe: str,
+    instrument: str,
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[datetime, datetime]:
+    """Fill in whichever edge the caller left open from the stored bars.
+
+    The upper edge is nudged past the newest bar because `_fetch_bars` uses a
+    half-open interval — without it the last bar of the series would be the
+    one bar a full-history run silently dropped.
+    """
+    if start is not None and end is not None:
+        return start, end
+    span = await bars_span(db, _TIMEFRAME_SOURCE[timeframe], instrument)
+    if span is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no {timeframe} bars stored for {instrument}",
+        )
+    lo, hi = span
+    return (start or lo), (end or hi + timedelta(seconds=1))
 
 
 def _as_day_results(trades: list[Trade]) -> list[DayResult]:
@@ -281,9 +321,15 @@ async def evaluate_strategy(
         raise HTTPException(status_code=404, detail="strategy not found")
     defn = StrategyDefinition.model_validate(row["definition"])
 
-    df = await load_bars_df(
-        db, body.instrument, defn.timeframe, body.start, body.end, body.adjustment
+    start, end = await _resolve_span(
+        db, defn.timeframe, body.instrument, body.start, body.end
     )
+    try:
+        df = await load_bars_df(
+            db, body.instrument, defn.timeframe, start, end, body.adjustment
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if df.empty:
         raise HTTPException(status_code=400, detail="no bars for this instrument/range")
 
@@ -295,6 +341,8 @@ async def evaluate_strategy(
     return EvaluateResponse(
         strategy_id=strategy_id,
         timeframe=defn.timeframe,
+        start=start,
+        end=end,
         bar_count=len(df),
         trades=[TradeModel(**asdict(t), pnl_points=t.pnl_points) for t in trades],
         metrics=_metrics(trades),
@@ -321,9 +369,15 @@ async def signal_test_strategy(
         raise HTTPException(status_code=404, detail="strategy not found")
     defn = StrategyDefinition.model_validate(row["definition"])
 
-    df = await load_bars_df(
-        db, body.instrument, defn.timeframe, body.start, body.end, body.adjustment
+    start, end = await _resolve_span(
+        db, defn.timeframe, body.instrument, body.start, body.end
     )
+    try:
+        df = await load_bars_df(
+            db, body.instrument, defn.timeframe, start, end, body.adjustment
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if df.empty:
         raise HTTPException(status_code=400, detail="no bars for this instrument/range")
 
@@ -335,6 +389,8 @@ async def signal_test_strategy(
     return SignalTestResponse(
         strategy_id=strategy_id,
         timeframe=defn.timeframe,
+        start=start,
+        end=end,
         bar_count=len(df),
         signal_count=res.signal_count,
         horizon=res.horizon,

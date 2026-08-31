@@ -84,14 +84,15 @@ async def load_sessions(
     db: AsyncSession, params: BacktestParams
 ) -> tuple[list[tuple[date, list[Bar]]], dict[date, float] | None]:
     """Fetch 1m bars and return ([sessions in range], atr_by_date | None)."""
+    start, end = params.span
     warmup_days = (
         params.atr_period * 2 + 14 if params.uses_atr else 0
     ) + _TZ_SPILL_DAYS
     fetch_start = datetime.combine(
-        params.start - timedelta(days=warmup_days), datetime.min.time(), tzinfo=params.clock.zone
+        start - timedelta(days=warmup_days), datetime.min.time(), tzinfo=params.clock.zone
     )
     fetch_end = datetime.combine(
-        params.end + timedelta(days=_TZ_SPILL_DAYS), datetime.min.time(), tzinfo=params.clock.zone
+        end + timedelta(days=_TZ_SPILL_DAYS), datetime.min.time(), tzinfo=params.clock.zone
     )
 
     stmt = text(
@@ -128,6 +129,6 @@ async def load_sessions(
         session_atr(all_sessions, params.atr_period) if params.uses_atr else None
     )
     in_range = [
-        (d, bs) for d, bs in all_sessions if params.start <= d <= params.end
+        (d, bs) for d, bs in all_sessions if start <= d <= end
     ]
     return in_range, atr_by_date

@@ -138,6 +138,32 @@ async def _fetch_bars(
     return [dict(row._mapping) for row in result.fetchall()]
 
 
+async def bars_span(
+    db: AsyncSession,
+    source: str,
+    instrument: str,
+) -> tuple[datetime, datetime] | None:
+    """Oldest and newest bar stored for this instrument at this timeframe.
+
+    Callers use this to mean "everything" without having to know how far
+    back the data goes: an omitted range resolves against the table itself,
+    so backfilling more history into the database widens every such run with
+    no code or client change. Read from the bars, not `data_coverage` —
+    that summary is refreshed by the ingest job and can lag it.
+    """
+    stmt = text(
+        f"""
+        SELECT min(ts) AS lo, max(ts) AS hi
+        FROM {source}
+        WHERE instrument = :instrument
+        """  # noqa: S608 — source is from a hardcoded dict, not user input
+    )
+    row = (await db.execute(stmt, {"instrument": instrument})).first()
+    if row is None or row.lo is None or row.hi is None:
+        return None
+    return row.lo, row.hi
+
+
 async def _fetch_rolls(
     db: AsyncSession,
     instrument: str,

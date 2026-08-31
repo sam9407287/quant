@@ -18,8 +18,10 @@ export interface BacktestParams {
   instrument: string;
   point_value_usd: number;
   contracts: number;
-  start: string; // "YYYY-MM-DD"
-  end: string;
+  // null = "as far as the stored 1m bars go". The backend resolves each
+  // edge and persists the concrete dates, so a saved run stays reproducible.
+  start: string | null; // "YYYY-MM-DD"
+  end: string | null;
   clock: SessionClock;
   direction_mode: DirectionMode;
   entry_offset_mode: OffsetMode;
@@ -72,6 +74,9 @@ export interface TradeRecord {
 export interface RunResponse {
   run_id: string;
   runtime_ms: number;
+  /** Span actually covered — the backend resolves an omitted date. */
+  start: string;
+  end: string;
   metrics: Metrics;
   equity_curve: EquityPoint[];
   trades: TradeRecord[];

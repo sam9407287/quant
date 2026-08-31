@@ -60,6 +60,10 @@ class TradeRecord(BaseModel):
 class RunResponse(BaseModel):
     run_id: str
     runtime_ms: int
+    # Resolved span — a request may leave either date unset to mean "all the
+    # stored bars", so the response has to say what was actually covered.
+    start: date
+    end: date
     metrics: MetricsModel
     equity_curve: list[EquityPoint]
     trades: list[TradeRecord]

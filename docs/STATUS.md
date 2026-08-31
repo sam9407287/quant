@@ -339,9 +339,10 @@ don't do all of them.
 
 ### Frontend
 
-- **Time-range selector on `/chart`.** The lookback is hard-coded per
-  timeframe. A date picker would make historical regime inspection
-  meaningful.
+- **Time-range selector on `/chart`.** The first window is still sized
+  per timeframe, though panning left now extends it a chunk at a time
+  and "Load all history" pulls the whole stored record, so nothing is
+  out of reach. A date picker would still beat scrolling to a date.
 - **Indicator overlays** (SMA / EMA / VWAP / Bollinger). Cheap to add,
   signals the codebase is going somewhere.
 - **Coverage page filters.** Filter by instrument, sort columns.
