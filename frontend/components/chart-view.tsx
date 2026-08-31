@@ -753,7 +753,11 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     priceRef.current.setMarkers(markers);
     boxesRef.current.setBoxes(boxes);
-  }, [evalResult, bars]);
+    // chartKind matters even though nothing here reads it: switching type
+    // tears down and rebuilds the price series, and the markers live ON
+    // that series. Without it the trades silently vanished on every type
+    // change while the strategy pill still claimed they were there.
+  }, [evalResult, bars, chartKind]);
 
   return (
     <div className="space-y-4">
