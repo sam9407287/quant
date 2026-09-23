@@ -587,9 +587,12 @@ class TestStrategiesAPI:
                 body = ev.json()
                 assert body["bar_count"] == 5
                 # The resolved span is echoed back so the caller can say what
-                # was covered rather than guess.
-                assert body["start"] <= df["ts"].min().isoformat()
-                assert body["end"] > df["ts"].max().isoformat()
+                # was covered rather than guess. Compare as instants: the API
+                # spells UTC as "Z" and pandas as "+00:00", and "Z" sorts
+                # after "+" as text, so a string comparison fails on equal
+                # timestamps.
+                assert datetime.fromisoformat(body["start"]) <= df["ts"].min()
+                assert datetime.fromisoformat(body["end"]) > df["ts"].max()
         finally:
             app.dependency_overrides.clear()
 
