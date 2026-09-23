@@ -78,6 +78,25 @@ interface History {
  */
 const BACKFILL_TRIGGER_BARS = 30;
 
+/**
+ * Most bars the chart will hold for one selection.
+ *
+ * Backfill is bounded by what the backend stores, and that is no longer a
+ * small number: a 24/7 instrument at 1m already holds ~4.7 million bars.
+ * Measured in V8, a bar costs ~230 B as the fetched `KBar` plus ~70 B for
+ * the series copy the chart is handed, before the library's own copies and
+ * every indicator series on top — so the full 1m record is well over a
+ * gigabyte and kills the tab. Half a million bars is ~150 MB of bars, a
+ * year of 1m for a 24/7 instrument, and still pans smoothly. Older bars are
+ * reachable at a higher timeframe, which is what the cap message says.
+ */
+const MAX_HELD_BARS = 500_000;
+
+/** True once `held` has grown as far as the chart lets it. */
+function atCapacity(held: History): boolean {
+  return held.bars.length >= MAX_HELD_BARS;
+}
+
 /** Largest chunk that stays under the endpoint's own 50 000-bar ceiling. */
 function chunkCeilingDays(interval: Interval): number {
   const barsPerDay = 1440 / NATIVE_MINUTES[interval.base];
@@ -488,7 +507,9 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
   const backfill = useCallback(async () => {
     if (backfillingRef.current) return;
     const held = historyRef.current;
-    if (!held || held.key !== historyKey || held.exhausted) return;
+    if (!held || held.key !== historyKey || held.exhausted || atCapacity(held)) {
+      return;
+    }
 
     backfillingRef.current = true;
     setBackfilling(true);
@@ -523,7 +544,12 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
     setBackfilling(true);
     try {
       let held = historyRef.current;
-      while (held && held.key === historyKey && !held.exhausted) {
+      while (
+        held &&
+        held.key === historyKey &&
+        !held.exhausted &&
+        !atCapacity(held)
+      ) {
         const next = await fetchOlder(held);
         if (!next || !stillCurrent(held)) break;
         preserveViewRef.current = true;
@@ -800,8 +826,18 @@ export function ChartView({ initialInstrument, initialTimeframe }: Props) {
           </span>
           {/* Panning already pulls history a chunk at a time; this is for
               asking outright rather than dragging until the chart stops
-              moving. It disappears once the backend has nothing older. */}
-          {history && !history.exhausted && !loading && (
+              moving. It disappears once the backend has nothing older, or
+              once the chart holds as much as it safely can. */}
+          {history && !history.exhausted && !loading && atCapacity(history) && (
+            <span
+              className="font-mono text-[11px] text-zinc-500"
+              title={`The chart keeps at most ${MAX_HELD_BARS.toLocaleString()} bars; a higher timeframe reaches further back`}
+            >
+              history capped at {MAX_HELD_BARS.toLocaleString()} bars · pick a
+              higher timeframe for more
+            </span>
+          )}
+          {history && !history.exhausted && !loading && !atCapacity(history) && (
             <button
               type="button"
               onClick={loadAll}

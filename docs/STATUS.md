@@ -280,6 +280,7 @@ optimisation backlog.
 | **#19** | Decommission the legacy `Postgres` plugin and `postgres-volume` | After the next 00:00 UTC (Taiwan 08:00) fetch confirms the pipeline is still solid with all 9 instruments | Dashboard → `Postgres` service → Settings → Danger → Delete; then Volume → Delete |
 | 📋 | Watch the next scheduled fetch | 2026-04-28 (Tue) ≥ 00:30 UTC = Taiwan 08:30 | `railway logs --service fetcher --since 1h`. Confirm 9 instruments fetched and `data_coverage.latest_ts` advanced |
 | **#21** | Strategy builder + chart overlay (ADR-004) | ✅ Shipped 2026-07-20 | strategies table + rule engine + /api/v1/strategies + /research/strategies builder + /chart trade overlay (markers + green/red position boxes). Schema applied to prod manually |
+| **#22** | Million-bar datasets (BTC/ETH 1m ≈ 4.7M bars each, 27M total) | Frontend cap shipped 2026-09-23; backend budget unverified | `/chart` now holds at most 500 000 bars per selection (`MAX_HELD_BARS`, measured ~300 B/bar in V8 — the full 1m record would kill the tab). Backend: a 4.7M-bar evaluate peaks ~0.9 GB (loader ~190 B/bar; engine adds ~50 B/bar, 2.6 s) and the API runs 2 uvicorn workers, so `MAX_BARS = 10M` assumes ≥4 GB per container. **Read the cgroup limit before the first full BTC 1m run**: `railway ssh --service quant "cat /sys/fs/cgroup/memory.max"`. Note the killzone loader caps at 3M bars, so full-range killzone runs on 1m crypto already answer 400 |
 | **#20** | Period 2 backtest engine (B1–B7) | ✅ B1–B5 + B7 shipped 2026-07-19 | Engine + analysis + /api/v1/backtest + /research/backtest (form) + /research/backtest/canvas (node UI). Only **B6 remains: FirstRate NQ 1m purchase + bootstrap_csv.py load** — until then runs cover ~3 months of yfinance data and seasonality/Monte Carlo conclusions are not decision-grade |
 
 Everything else is in §7 (optimisation) or §8 (Period 2 design direction).
@@ -341,8 +342,9 @@ don't do all of them.
 
 - **Time-range selector on `/chart`.** The first window is still sized
   per timeframe, though panning left now extends it a chunk at a time
-  and "Load all history" pulls the whole stored record, so nothing is
-  out of reach. A date picker would still beat scrolling to a date.
+  and "Load all history" pulls the stored record up to the 500 000-bar
+  cap (#22). A date picker would still beat scrolling to a date, and is
+  the only way past the cap short of a higher timeframe.
 - **Indicator overlays** (SMA / EMA / VWAP / Bollinger). Cheap to add,
   signals the codebase is going somewhere.
 - **Coverage page filters.** Filter by instrument, sort columns.

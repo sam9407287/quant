@@ -90,6 +90,11 @@ async def _stream_frame(
     copy that concatenating the partitions makes. Ten million bars is
     therefore ~1.9 GB — comfortable on a 4 GB container, not on 1 GB. If a
     run ever OOMs, that is the number to lower MAX_BARS against.
+
+    The load is the peak, not the run: over 4.7 million bars the engine adds
+    only ~50 B/bar of indicator and signal columns on top of the frame
+    (~225 MB, 2.6 s), so a request's footprint is set here. The API runs two
+    uvicorn workers, so the budget has to hold for two such loads at once.
     """
     times: list[np.ndarray] = []
     cols: list[tuple[np.ndarray, ...]] = []
