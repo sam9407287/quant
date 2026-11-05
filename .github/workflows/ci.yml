@@ -45,6 +45,9 @@ jobs:
       - name: Run unit tests (no DB required)
         run: pytest tests/ -m "not integration" -v --tb=short
 
+      - name: Pairs lab offline smoke (synthetic data, no DB)
+        run: python scripts/smoke_pairs.py --json
+
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest

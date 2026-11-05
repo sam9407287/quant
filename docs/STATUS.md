@@ -281,6 +281,7 @@ optimisation backlog.
 | 📋 | Watch the next scheduled fetch | 2026-04-28 (Tue) ≥ 00:30 UTC = Taiwan 08:30 | `railway logs --service fetcher --since 1h`. Confirm 9 instruments fetched and `data_coverage.latest_ts` advanced |
 | **#21** | Strategy builder + chart overlay (ADR-004) | ✅ Shipped 2026-07-20 | strategies table + rule engine + /api/v1/strategies + /research/strategies builder + /chart trade overlay (markers + green/red position boxes). Schema applied to prod manually |
 | **#22** | Million-bar datasets (BTC/ETH 1m ≈ 4.7M bars each, 27M total) | Frontend cap shipped 2026-09-23; backend budget unverified | `/chart` now holds at most 500 000 bars per selection (`MAX_HELD_BARS`, measured ~300 B/bar in V8 — the full 1m record would kill the tab). Backend: a 4.7M-bar evaluate peaks ~0.9 GB (loader ~190 B/bar; engine adds ~50 B/bar, 2.6 s) and the API runs 2 uvicorn workers, so `MAX_BARS = 10M` assumes ≥4 GB per container. **Read the cgroup limit before the first full BTC 1m run**: `railway ssh --service quant "cat /sys/fs/cgroup/memory.max"`. Note the killzone loader caps at 3M bars, so full-range killzone runs on 1m crypto already answer 400 |
+| **#23** | **Pairs lab (ADR-010)** — cointegration scanner, walk-forward engine, daily Discord job, `/research/pairs` UI | ✅ Code shipped 2026-11-05; **activation pending** | Set `PAIRS_WEBHOOK_URL` (+ `PAIRS_DRY_RUN=true` for two weeks) on the **fetcher** service, redeploy api + fetcher + frontend, press *Refresh data* then *Run scan* on `/research/pairs`. Tables self-create at startup. Runbook in §11 |
 | **#20** | Period 2 backtest engine (B1–B7) | ✅ B1–B5 + B7 shipped 2026-07-19 | Engine + analysis + /api/v1/backtest + /research/backtest (form) + /research/backtest/canvas (node UI). Only **B6 remains: FirstRate NQ 1m purchase + bootstrap_csv.py load** — until then runs cover ~3 months of yfinance data and seasonality/Monte Carlo conclusions are not decision-grade |
 
 Everything else is in §7 (optimisation) or §8 (Period 2 design direction).
@@ -564,3 +565,48 @@ README.md                — public-facing project overview
 frontend/.env.local.example — frontend env vars
 railway.toml             — 4-service topology
 ```
+
+---
+
+## 11. Pairs lab (ADR-010) — operator runbook
+
+Shipped 2026-11-05 as a sub-system: `app/pairs/`, `/api/v1/pairs/*`,
+`fetcher/pairs_job.py`, `frontend/app/research/pairs/*`. Design, methodology
+and findings: `docs/ADR-010-pairs-lab.md`. The in-app guide at
+`/research/pairs/guide` explains every page and metric.
+
+**Activation (Sam, one time)**
+
+1. Create a Discord webhook on a dedicated channel (not the ops one).
+2. On the **fetcher** service set `PAIRS_WEBHOOK_URL=<webhook>` and
+   `PAIRS_DRY_RUN=true`. Defaults for everything else are fine
+   (`PAIRS_CRON=0 23 * * 1-5`, `PAIRS_CAPITAL=1000000`).
+3. Redeploy `quant` (api), `fetcher`, `frontend`. No migration step: the
+   API lifespan and the job run `ensure_schema()` (all `IF NOT EXISTS`).
+4. On `/research/pairs`: *Refresh data* (≈ 60 tickers × 10 years, one
+   batch call, under a minute), *Seed default pairs*, *Run scan*.
+5. After two weeks of dry runs, compare the signal feed with the backtest
+   and flip `PAIRS_DRY_RUN=false`.
+
+**Daily operation**
+
+- Job history is on the dashboard (§6 block) and in `pairs_job_runs`.
+  `no_data` on a US holiday is expected. `error` posts to the webhook
+  (unless dry run) and never touches the 1m fetch job.
+- Same-day re-runs are idempotent (state `as_of`, unique signal key,
+  `notified_at`). Admins can trigger a dry run from the dashboard or
+  `POST /api/v1/pairs/jobs/daily?dry_run=true`.
+- Logs: `railway logs --service fetcher --since 2h | grep pairs`.
+
+**Checks before trusting a result**
+
+- Read the forward-return table on the Analyze page before any backtest.
+- Judge backtests by the deflated Sharpe and the sensitivity plateau.
+- Futures legs are front-month series with roll gaps until a continuous
+  source is bought; equity index pairs read `roll_calendar`.
+
+**Smoke tests**
+
+- `python scripts/smoke_pairs.py` (offline, synthetic, also in CI).
+- `pytest tests/test_pairs_*.py` (≈ 170 tests, no DB).
+- `cd frontend && pnpm typecheck && pnpm build`.

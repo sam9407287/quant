@@ -60,12 +60,13 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 | Period 1 | ✅ Deployed | Data collection: TimescaleDB + daily auto-fetch |
 | Period 1.5 | 🚧 Backend live | No-code ML workbench (ADR-002); front-end pending |
 | Period 2 | ✅ Rule-based track live | Killzone-OCO backtest engine, rule-based strategy builder, **signal testing** (ADR-008), node canvas (add/duplicate/delete modules). ML-signal track still planned (STATUS.md §8) |
+| Pairs lab | ✅ Shipped 2026-11-05 | Statistical arbitrage research (ADR-010): universe scan, cointegration evidence, walk-forward portfolio backtest, daily Discord alerts, `/research/pairs` |
 | Period 3 | 📋 Planned | Live trading: IBKR real-time + automated orders |
 | Frontend | ✅ Deployed | Next.js 14 + lightweight-charts dashboard in `frontend/` |
 
 ---
 
-## Current Snapshot (last updated 2026-04-27)
+## Current Snapshot (last updated 2026-11-05)
 
 > **For full state, runbook, problem log, and session-handoff tips, read
 > `docs/STATUS.md` first.** This section is just the index.
@@ -81,6 +82,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 **Pending**
 
 - ⏳ Watch the next 00:00 UTC (Taiwan 08:00) scheduled fetch
+- 🧪 **Pairs lab shipped, awaiting activation** (2026-11-05, ADR-010): cointegration scanner + walk-forward engine + daily Discord job + `/research/pairs` UI with in-app guide. **Needs Sam to set `PAIRS_WEBHOOK_URL` (+ `PAIRS_DRY_RUN=true`) on the fetcher and redeploy** — runbook in `docs/STATUS.md` §11
 - 🗑 Decommission legacy `Postgres` plugin + `postgres-volume` (after the watch step) — see Task #19 in `docs/STATUS.md`
 - 🛠 Build ML workbench front-end (`/research` wizard, result charts, experiments list) — backend `/api/v1/ml/train` already live; see `docs/ADR-002-ml-workbench.md` and `app/ml/schemas.py`
 - ✅ **Period 2 backtest engine shipped** (2026-07-19): engine + analysis + `/api/v1/backtest` + `/research/backtest` form + `/research/backtest/canvas` node UI. Remaining: **B6 — FirstRate 18y CSV not yet purchased**; until it lands, only ~3 months of yfinance data back the runs, so seasonality/Monte Carlo conclusions are not yet meaningful

@@ -212,14 +212,36 @@ Every phase ships with unit tests; the lab also has an offline smoke run.
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| 0 | This ADR | ✅ |
-| 1 | Universe + contract specs, migration, daily-bar data layer, tests | ⏳ |
-| 2 | Statistics, screening, diagnostics, tests | ⏳ |
-| 3 | Signals, sizing, walk-forward backtest, portfolio, sensitivity, smoke script | ⏳ |
-| 4 | Repository + REST API, tests | ⏳ |
-| 5 | Daily job, scheduler wiring, Discord notify, tests | ⏳ |
-| 6 | Frontend: dashboard, analysis, backtest, guide, nav | ⏳ |
-| 7 | Docs (STATUS, CLAUDE.md), CI smoke step, deploy notes | ⏳ |
+| 0 | This ADR | ✅ 2026-11-05 |
+| 1 | Universe + contract specs, migration, daily-bar data layer, tests | ✅ 2026-11-05 |
+| 2 | Statistics, screening, diagnostics, tests | ✅ 2026-11-05 |
+| 3 | Signals, sizing, walk-forward backtest, portfolio, sensitivity, smoke script | ✅ 2026-11-05 |
+| 4 | Repository + REST API, tests | ✅ 2026-11-05 |
+| 5 | Daily job, scheduler wiring, Discord notify, tests | ✅ 2026-11-05 |
+| 6 | Frontend: dashboard, analysis, backtest, guide, nav | ✅ 2026-11-05 |
+| 7 | Docs (STATUS, CLAUDE.md), CI smoke step, deploy notes | ✅ 2026-11-05 |
+| — | Activation: `PAIRS_WEBHOOK_URL` on the fetcher, two weeks of `PAIRS_DRY_RUN=true`, then live | ⏳ Sam |
+| — | Paid continuous-contract source for futures legs | ⏳ purchase decision |
+| — | Basket engine (Johansen vector, 3–4 legs) | 📋 next module |
+
+## 5.1 Findings recorded during implementation
+
+- **z window.** The brief's `2·HL` window understates the stationary
+  spread variance; on a synthetic cointegrated pair the strategy scores
+  Sharpe ≈ 0 with it and 1.4–1.7 with a 60-day window because the 3.5σ
+  stop fires on most trades. Defaults are now `clip(4·HL, 20, 120)` with
+  the multiple exposed as a parameter (`stats.zscore_window`).
+- **Hedge geometry.** With a log-price regression, dollar notional of the
+  X leg is β × the Y leg (the brief had it reversed). `sizing.py` and the
+  guide state the correct direction.
+- **Live vendor check (2026-11-05).** Twelve tickers × three years
+  downloaded in one batch call normalised cleanly (9 054 rows, one
+  extreme-move flag on SI 2026-01-30). A seven-pair scan ran in 0.3 s.
+  Over 2024–2026 none of the brief's pairs qualified under the default
+  rules: NQ/ES and EWA/EWC pass the point-in-time tests but fail the
+  60-day stability gate; CL/BZ passes Johansen but not Engle-Granger.
+  That is the expected, honest answer for a classic-pairs universe and is
+  exactly what the stability gate is for.
 
 ## 6. Operator notes
 
