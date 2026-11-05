@@ -19,6 +19,7 @@ from app.core.instruments import get_data_source
 from app.db.session import AsyncSessionLocal
 from fetcher.backup import run_backup
 from fetcher.notifier import notify
+from fetcher.pairs_job import run_pairs_job
 from fetcher.pipeline import (
     flag_anomalies,
     refresh_continuous_aggregates,
@@ -129,6 +130,25 @@ def build_scheduler() -> AsyncIOScheduler:
         trigger=trigger,
         id="daily_fetch",
         name="Daily 1m bar ingestion + aggregation",
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+    # Pairs lab (ADR-010): runs an hour before the 1m fetch, after the US
+    # close. Isolated in its own job so a failure there cannot touch
+    # ingestion, and `max_instances=1` keeps a slow scan from overlapping
+    # the next day's run.
+    pairs_parts = _settings.pairs_cron.split()
+    scheduler.add_job(
+        run_pairs_job,
+        trigger=CronTrigger(
+            minute=pairs_parts[0],
+            hour=pairs_parts[1],
+            day_of_week=pairs_parts[4] if len(pairs_parts) > 4 else "*",
+            timezone="UTC",
+        ),
+        id="pairs_daily",
+        name="Pairs lab daily scan + alerts",
         max_instances=1,
         misfire_grace_time=3600,
     )

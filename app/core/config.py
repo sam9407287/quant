@@ -97,6 +97,20 @@ class Settings(BaseSettings):
     # Absolute base used to build links inside those emails.
     frontend_base_url: str = "https://frontend-production-d637.up.railway.app"
 
+    # Statistical arbitrage lab (ADR-010). The daily job shares the fetcher
+    # process; its webhook is a separate Discord channel from the ops
+    # summary so trade alerts never sit under fetch statistics.
+    pairs_webhook_url: str = ""
+    pairs_cron: str = "0 23 * * 1-5"
+    # Dry run: scan, persist state and signals, but post nothing. The
+    # brief asks for two weeks of this after the first deploy.
+    pairs_dry_run: bool = False
+    pairs_history_years: int = 10
+    # Capital the daily job sizes suggested positions against.
+    pairs_capital: float = 1_000_000.0
+    pairs_daily_digest: bool = True
+    pairs_notify_no_data: bool = False
+
     # Off-site backup to Cloudflare R2 (ADR-006). Empty credentials
     # disable the backup job rather than failing the fetcher.
     r2_account_id: str = ""
