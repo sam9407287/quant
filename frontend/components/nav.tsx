@@ -13,6 +13,7 @@ const links: { href: string; label: string; badge?: boolean }[] = [
   { href: "/research/backtest", label: "Backtest" },
   { href: "/research/strategies", label: "Strategies", badge: true },
   { href: "/research/signal-test", label: "Signal Test" },
+  { href: "/research/pairs", label: "Pairs" },
 ];
 
 export function Nav() {
