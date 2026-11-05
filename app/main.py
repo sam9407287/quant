@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -13,6 +14,7 @@ from app.api import (
     coverage,
     kbars,
     ml,
+    pairs,
     roll_calendar,
     strategies,
     strategy_access,  # noqa: F401
@@ -20,12 +22,24 @@ from app.api import (
 from app.core.config import get_settings
 
 _settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Run startup and shutdown hooks."""
-    # Nothing to initialise yet; DB connections are created per-request.
+    # The pairs lab creates its own tables on first start (all IF NOT
+    # EXISTS, ADR-010 §2.2) so a deploy needs no manual migration. A
+    # failure here is logged, not fatal: every other route is independent
+    # of these tables and the daily job retries the same DDL.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.pairs.schema import ensure_schema
+
+        async with AsyncSessionLocal() as session:
+            await ensure_schema(session)
+    except Exception:  # pragma: no cover - depends on a live database
+        logger.exception("pairs schema check failed at startup; /api/v1/pairs may 500 until the DB is reachable")
     yield
 
 
@@ -79,6 +93,7 @@ app.include_router(ml.router)
 app.include_router(backtest.router)
 app.include_router(strategies.router)
 app.include_router(strategy_access.router)
+app.include_router(pairs.router)
 
 
 @app.get("/health", tags=["system"], summary="Health check")
