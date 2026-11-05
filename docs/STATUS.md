@@ -570,6 +570,8 @@ railway.toml             — 4-service topology
 
 ## 11. Pairs lab (ADR-010) — operator runbook
 
+> Session handoff with the full done / to-do list: `docs/HANDOFF-2026-11-05-pairs-lab.md`.
+
 Shipped 2026-11-05 as a sub-system: `app/pairs/`, `/api/v1/pairs/*`,
 `fetcher/pairs_job.py`, `frontend/app/research/pairs/*`. Design, methodology
 and findings: `docs/ADR-010-pairs-lab.md`. The in-app guide at

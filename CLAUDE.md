@@ -70,6 +70,7 @@ Full specifications: `docs/SPEC.md` | Architecture: `docs/SYSTEM_DESIGN.md`
 
 > **For full state, runbook, problem log, and session-handoff tips, read
 > `docs/STATUS.md` first.** This section is just the index.
+> **Latest session handoff (2026-11-05, pairs lab):** `docs/HANDOFF-2026-11-05-pairs-lab.md` — done list, Sam's activation steps, next-session TODOs.
 
 **Live**
 
