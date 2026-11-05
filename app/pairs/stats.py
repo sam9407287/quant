@@ -241,11 +241,18 @@ def _hl_from_lambda(lam: float) -> float | None:
 # z-score
 # ---------------------------------------------------------------------------
 
-def zscore_window(hl: float | None, *, lower: int = 10, upper: int = 60) -> int:
-    """`clip(round(2·HL), lower, upper)`; the upper bound when HL is unknown."""
+def zscore_window(hl: float | None, *, lower: int = 10, upper: int = 60, multiple: float = 2.0) -> int:
+    """`clip(round(multiple·HL), lower, upper)`; the upper bound when HL is unknown.
+
+    The brief proposed 2·HL. On synthetic OU spreads that window understates
+    the stationary variance (it spans only two half-lives), which inflates z,
+    fires the 3.5σ stop constantly and destroys the edge; the lab's configs
+    therefore default to 4·HL with a 20-day floor and let the multiple be
+    varied as a sensitivity.
+    """
     if hl is None or not np.isfinite(hl):
         return upper
-    return int(min(max(round(2 * hl), lower), upper))
+    return int(min(max(round(multiple * hl), lower), upper))
 
 
 def rolling_zscore(spread: FloatArray, window: int) -> FloatArray:

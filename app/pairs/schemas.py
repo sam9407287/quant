@@ -55,8 +55,11 @@ class ScanConfig(BaseModel):
     as_of: date | None = None
     formation_window: int = Field(default=504, ge=60, le=2520)
     hedge_method: HedgeMethod = "ols"
-    z_window_min: int = Field(default=10, ge=5)
-    z_window_max: int = Field(default=60, ge=10)
+    # z window = clip(round(z_window_multiple · HL), min, max). See stats.zscore_window
+    # for why the default is 4·HL / 20 rather than the brief's 2·HL / 10.
+    z_window_min: int = Field(default=20, ge=5)
+    z_window_max: int = Field(default=120, ge=10)
+    z_window_multiple: float = Field(default=4.0, gt=0, le=20)
     rules: QualificationRules = Field(default_factory=QualificationRules)
     price_source: PriceSource = "settlement"
     snapshot_time_et: str = "15:00"
@@ -225,8 +228,9 @@ class BacktestConfig(BaseModel):
     end: date | None = None
     formation_window: int = Field(default=504, ge=60, le=2520)
     hedge_method: HedgeMethod = "ols"
-    z_window_min: int = Field(default=10, ge=5)
-    z_window_max: int = Field(default=60, ge=10)
+    z_window_min: int = Field(default=20, ge=5)
+    z_window_max: int = Field(default=120, ge=10)
+    z_window_multiple: float = Field(default=4.0, gt=0, le=20)
     fill: FillMode = "next_open"
     rules: SignalRules = Field(default_factory=SignalRules)
     qualification: QualificationRules = Field(default_factory=QualificationRules)

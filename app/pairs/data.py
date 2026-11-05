@@ -258,13 +258,21 @@ async def load_wide_prices(
     *,
     start: date | None = None,
     end: date | None = None,
+    field: str = "close",
 ) -> pd.DataFrame:
-    """Date × ticker price matrix using each instrument's proper price field."""
+    """Date × ticker price matrix using each instrument's proper price field.
+
+    `field="open"` returns opens for next-open fills; for ETFs and stocks
+    the open is scaled by adj_close / close so it sits on the same
+    dividend-adjusted scale as the close series the signals were built on.
+    """
     if not tickers:
         return pd.DataFrame()
+    if field not in ("close", "open"):
+        raise ValueError("field must be 'close' or 'open'")
     stmt = text(
         """
-        SELECT ticker, trading_date, close, adj_close
+        SELECT ticker, trading_date, open, close, adj_close
         FROM pairs_daily_bars
         WHERE ticker IN :tickers
           AND (:start IS NULL OR trading_date >= :start)
@@ -275,12 +283,13 @@ async def load_wide_prices(
     rows = (await session.execute(stmt, {"tickers": list(tickers), "start": start, "end": end})).fetchall()
     if not rows:
         return pd.DataFrame(columns=list(tickers))
-    frame = pd.DataFrame(rows, columns=["ticker", "trading_date", "close", "adj_close"])
-    frame["price"] = np.where(
-        frame["ticker"].map(lambda t: price_field_for(t) if t in UNIVERSE else "close") == "adj_close",
-        frame["adj_close"],
-        frame["close"],
-    )
+    frame = pd.DataFrame(rows, columns=["ticker", "trading_date", "open", "close", "adj_close"])
+    adjusted = frame["ticker"].map(lambda t: price_field_for(t) if t in UNIVERSE else "close") == "adj_close"
+    if field == "close":
+        frame["price"] = np.where(adjusted, frame["adj_close"], frame["close"])
+    else:
+        factor = np.where(adjusted, frame["adj_close"] / frame["close"], 1.0)
+        frame["price"] = frame["open"].astype(float) * factor
     wide = frame.pivot(index="trading_date", columns="ticker", values="price").sort_index()
     wide.index = pd.to_datetime(wide.index)
     return wide.reindex(columns=[t for t in tickers if t in wide.columns])

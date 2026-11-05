@@ -75,7 +75,9 @@ def evaluate_pair(
     tls = stats.tls_hedge(ya, xa)
     evidence = stats.cointegration_evidence(ya, xa)
     hl = stats.half_life_with_ci(fit.spread)
-    z_window = stats.zscore_window(hl.half_life, lower=config.z_window_min, upper=config.z_window_max)
+    z_window = stats.zscore_window(
+        hl.half_life, lower=config.z_window_min, upper=config.z_window_max, multiple=config.z_window_multiple
+    )
     zs = stats.rolling_zscore(fit.spread, z_window)
     z_last = float(zs[-1]) if np.isfinite(zs[-1]) else None
     tail = fit.spread[-z_window:]

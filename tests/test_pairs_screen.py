@@ -9,7 +9,7 @@ import pytest
 
 from app.pairs import diagnostics, screen
 from app.pairs.schemas import QualificationRules, ScanConfig
-from tests.pairs_synthetic import cointegrated_pair, independent_walks, log_price_frame
+from app.pairs.synthetic import cointegrated_pair, independent_walks, log_price_frame
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +57,7 @@ class TestEvaluatePair:
         assert res.beta == pytest.approx(1.2, abs=0.1)
         assert res.half_life is not None and 5 < res.half_life < 30
         assert res.stability_ratio is not None and res.stability_ratio >= 0.8
-        assert res.z is not None and res.z_window == min(max(round(2 * res.half_life), 10), 60)
+        assert res.z is not None and res.z_window == min(max(round(4 * res.half_life), 20), 120)
         assert res.pair_name == "NQ/ES"
         assert res.as_of == logp.index[-1].date()
         assert res.beta_tls is not None and res.beta_johansen is not None

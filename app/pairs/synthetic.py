@@ -1,4 +1,4 @@
-"""Synthetic series generators shared by the pairs-lab tests and the smoke script.
+"""Synthetic series with known answers, shared by tests, the smoke script and demos.
 
 Two worlds: a genuinely cointegrated pair with known β and OU half-life,
 and two independent random walks that must *not* pass. Deterministic by

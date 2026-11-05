@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from app.pairs import stats
-from tests.pairs_synthetic import cointegrated_pair, independent_walks
+from app.pairs.synthetic import cointegrated_pair, independent_walks
 
 
 class TestHedgeRatio:
@@ -100,6 +100,7 @@ class TestZScore:
         assert stats.zscore_window(100.0) == 60
         assert stats.zscore_window(None) == 60
         assert stats.zscore_window(8.0, lower=20, upper=40) == 20
+        assert stats.zscore_window(8.0, lower=20, upper=120, multiple=4.0) == 32
 
     def test_rolling_z_matches_pandas(self) -> None:
         import pandas as pd

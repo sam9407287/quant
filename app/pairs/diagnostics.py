@@ -39,12 +39,22 @@ DEFAULT_HORIZONS: tuple[int, ...] = (5, 10, 20)
 
 @dataclass(frozen=True, slots=True)
 class RollingSeries:
-    """Per-day spread, z, β and p-value over the pair's full aligned history."""
+    """Per-day parameters over the pair's aligned history, all from data before t.
+
+    `mean` / `std` are the trailing z-window moments of the in-window
+    spread; together with `alpha` / `beta` they are exactly the parameters
+    a trade entered at t would freeze.
+    """
 
     index: pd.DatetimeIndex
     spread: FloatArray
     zscore: FloatArray
+    alpha: FloatArray
     beta: FloatArray
+    half_life: FloatArray
+    z_window: FloatArray
+    mean: FloatArray
+    std: FloatArray
     pvalue: FloatArray
 
 
@@ -56,6 +66,7 @@ def rolling_series(
     formation_window: int,
     z_window_min: int,
     z_window_max: int,
+    z_window_multiple: float = 4.0,
     hedge_method: str = "ols",
     pvalue_step: int = 5,
 ) -> RollingSeries:
@@ -69,7 +80,12 @@ def rolling_series(
     n = len(y)
     spread = np.full(n, np.nan)
     z = np.full(n, np.nan)
+    alpha = np.full(n, np.nan)
     beta = np.full(n, np.nan)
+    hl_arr = np.full(n, np.nan)
+    zwin = np.full(n, np.nan)
+    mean = np.full(n, np.nan)
+    std_arr = np.full(n, np.nan)
     pval = np.full(n, np.nan)
     hedge = stats.ols_hedge if hedge_method == "ols" else stats.tls_hedge
 
@@ -77,22 +93,33 @@ def rolling_series(
     for t in range(formation_window, n):
         ywin = y[t - formation_window : t]
         xwin = x[t - formation_window : t]
+        if not (np.isfinite(ywin).all() and np.isfinite(xwin).all() and np.isfinite(y[t]) and np.isfinite(x[t])):
+            continue
         fit = hedge(ywin, xwin)
+        alpha[t] = fit.alpha
         beta[t] = fit.beta
         spread[t] = y[t] - fit.alpha - fit.beta * x[t]
         hl = stats.half_life(fit.spread)
-        w = stats.zscore_window(hl.half_life, lower=z_window_min, upper=z_window_max)
+        if hl.half_life is not None:
+            hl_arr[t] = hl.half_life
+        w = stats.zscore_window(hl.half_life, lower=z_window_min, upper=z_window_max, multiple=z_window_multiple)
+        zwin[t] = w
         tail = fit.spread[-w:]
         std = tail.std(ddof=1) if len(tail) > 1 else 0.0
+        mean[t] = tail.mean()
+        std_arr[t] = std
         if std > 1e-12:
-            z[t] = (spread[t] - tail.mean()) / std
+            z[t] = (spread[t] - mean[t]) / std
         if (t - formation_window) % pvalue_step == 0:
             try:
                 last_p = stats.engle_granger_pvalue(ywin, xwin)
             except (ValueError, np.linalg.LinAlgError):
                 last_p = np.nan
         pval[t] = last_p
-    return RollingSeries(index=index, spread=spread, zscore=z, beta=beta, pvalue=pval)
+    return RollingSeries(
+        index=index, spread=spread, zscore=z, alpha=alpha, beta=beta, half_life=hl_arr,
+        z_window=zwin, mean=mean, std=std_arr, pvalue=pval,
+    )
 
 
 def forward_buckets(
