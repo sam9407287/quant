@@ -19,7 +19,7 @@ const links: { href: string; label: string; badge?: boolean }[] = [
 export function Nav() {
   return (
     <header className="border-b border-border bg-bg-panel">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-y-2 px-4 py-3 sm:px-6 sm:py-4">
         <Link href="/" className="flex items-center gap-2.5 font-mono text-lg font-semibold tracking-tight">
           <Image
             src="/logo-mark.png"
@@ -31,7 +31,9 @@ export function Nav() {
           />
           quant<span className="text-accent-blue">.futures</span>
         </Link>
-        <nav className="flex gap-1 text-sm">
+        {/* On a phone the nine links do not fit: let the row scroll sideways
+            instead of wrapping into three lines or overflowing the viewport. */}
+        <nav className="order-last -mx-4 flex w-[calc(100%+2rem)] gap-1 overflow-x-auto whitespace-nowrap px-4 text-sm sm:order-none sm:mx-0 sm:w-auto sm:px-0">
           {links.map((l) => (
             <Link
               key={l.href}

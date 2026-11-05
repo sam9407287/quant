@@ -148,7 +148,7 @@ export function PairsDashboard() {
             })}>
               Seed default pairs
             </button>
-            <div className="ml-auto flex items-end gap-2">
+            <div className="flex flex-wrap items-end gap-2 sm:ml-auto">
               <div>
                 <label className={LABEL}>Scan</label>
                 <select className={INPUT} value={scanMode} onChange={(e) => setScanMode(e.target.value as "watchlist" | "universe")}>
@@ -200,8 +200,8 @@ export function PairsDashboard() {
         {rows.length === 0 ? (
           <Empty>{scan ? "No rows match." : "Nothing scanned yet."}</Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
+          <div>
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   {(
@@ -259,7 +259,7 @@ export function PairsDashboard() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         )}
       </section>
@@ -323,7 +323,7 @@ export function PairsDashboard() {
           {states.length === 0 ? (
             <Empty>No state yet — the daily job writes it after its first run.</Empty>
           ) : (
-            <table className="min-w-full">
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   <th className={TH}>Pair</th>
@@ -348,7 +348,7 @@ export function PairsDashboard() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </section>
       </div>

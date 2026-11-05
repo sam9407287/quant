@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Nav } from "@/components/nav";
 import { AuthProvider } from "@/lib/auth";
@@ -22,6 +22,14 @@ export const metadata: Metadata = {
     type: "website",
   },
   twitter: { card: "summary_large_image" },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "quant.futures", statusBarStyle: "black-translucent" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0b0d12",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -34,7 +42,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-bg text-zinc-100">
         <AuthProvider>
           <Nav />
-          <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+          <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
         </AuthProvider>
       </body>
     </html>

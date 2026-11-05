@@ -221,7 +221,7 @@ function EvidenceTable({ s }: { s: AnalysisResponse["stats"] }) {
     { test: "Roll gaps in window", value: String(s.roll_gap_days), pass: s.roll_gap_days === 0 ? true : null, note: "large single-day moves — on a front-month series these are contract rolls polluting the spread" },
   ];
   return (
-    <table className="min-w-full">
+    <div className="overflow-x-auto"><table className="min-w-full">
       <thead className="border-b border-border">
         <tr>
           <th className={TH}>Evidence</th>
@@ -240,14 +240,14 @@ function EvidenceTable({ s }: { s: AnalysisResponse["stats"] }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
 function ForwardTable({ rows }: { rows: AnalysisResponse["forward"] }) {
   if (rows.length === 0) return null;
   return (
-    <table className="min-w-full">
+    <div className="overflow-x-auto"><table className="min-w-full">
       <thead className="border-b border-border">
         <tr>
           <th className={TH}>z bucket</th>
@@ -270,6 +270,6 @@ function ForwardTable({ rows }: { rows: AnalysisResponse["forward"] }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   );
 }

@@ -141,7 +141,7 @@ export default function GuidePage() {
             <p className={P}>
               One p-value is a weak reason to risk money, so each pair gets several independent tests:
             </p>
-            <table className="min-w-full">
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   <th className={TH}>Test</th>
@@ -176,7 +176,7 @@ export default function GuidePage() {
                   <td className={TD}>Scanning 1 800 ordered pairs at p &lt; 0.05 yields ~90 false positives by chance. The q-value is the honest number.</td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
 
             <h3 className={H3}>Half-life</h3>
             <p className={P}>
@@ -202,7 +202,7 @@ export default function GuidePage() {
           <section id="qualification" className={CARD}>
             <h2 className={H2}>4 · When a pair qualifies</h2>
             <p className={P}>All conditions must hold at the scan date; each is configurable.</p>
-            <table className="min-w-full">
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   <th className={TH}>Condition</th>
@@ -232,7 +232,7 @@ export default function GuidePage() {
                   <td className={TD}>A negative β is a different trade; a β that swings is a hedge that cannot be sized.</td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
             <p className={P}>
               The stability test is expensive (one regression and unit-root test per day), so the scan only runs it
               for pairs that already pass the point-in-time conditions. Pairs that fail show the cheapest failing
@@ -246,7 +246,7 @@ export default function GuidePage() {
               One state machine drives both the backtest and the daily job, so the backtest is a statement about
               the live system rather than a cousin of it. Decisions happen at the close; fills happen the next day.
             </p>
-            <table className="min-w-full">
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   <th className={TH}>Rule</th>
@@ -286,7 +286,7 @@ export default function GuidePage() {
                   <td className={TD}>β, mean and std are fixed at entry so the exit is judged against what was known then. Switch off to compare with daily refreshed parameters.</td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
             <p className={P}>Priority when several fire on the same day: stop → breakdown → time stop → exit. An exit never re-enters the same day.</p>
           </section>
 
@@ -437,7 +437,7 @@ export default function GuidePage() {
               again, the signal log refuses duplicate (date, pair, event) rows, and only events without a push
               timestamp are posted. Admins can trigger a dry run from the dashboard.
             </p>
-            <table className="min-w-full">
+            <div className="overflow-x-auto"><table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
                   <th className={TH}>Variable</th>
@@ -454,7 +454,7 @@ export default function GuidePage() {
                 <tr><td className={TDK}>PAIRS_NOTIFY_NO_DATA</td><td className={TDK}>false</td><td className={TD}>Also post when no new bar arrived (holidays would otherwise be silent).</td></tr>
                 <tr><td className={TDK}>PAIRS_HISTORY_YEARS</td><td className={TDK}>10</td><td className={TD}>History requested for tickers seen for the first time.</td></tr>
               </tbody>
-            </table>
+            </table></div>
             <p className={P}>
               Each alert links back to the pair&rsquo;s Analyze page. An entry message shows z, β, half-life,
               p-value, stability, the suggested integer legs with their rounding error and the two-sigma adverse

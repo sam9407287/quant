@@ -306,7 +306,7 @@ export function PairsBacktestWorkbench() {
             <section className={SECTION}>
               <h2 className="text-sm font-semibold text-zinc-200">Per-pair attribution</h2>
               <AttributionBars rows={run.result.attribution} />
-              <table className="min-w-full">
+              <div className="overflow-x-auto"><table className="min-w-full">
                 <thead className="border-b border-border">
                   <tr>
                     <th className={TH}>Pair</th>
@@ -333,7 +333,7 @@ export function PairsBacktestWorkbench() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </section>
             <section className={SECTION}>
               <h2 className="text-sm font-semibold text-zinc-200">P&amp;L correlation between pairs</h2>
@@ -374,7 +374,7 @@ export function PairsBacktestWorkbench() {
             </div>
             {showTrades && (
               <div className="max-h-[480px] overflow-auto">
-                <table className="min-w-full">
+                <div className="overflow-x-auto"><table className="min-w-full">
                   <thead className="sticky top-0 border-b border-border bg-bg-panel">
                     <tr>
                       <th className={TH}>Pair</th>
@@ -412,7 +412,7 @@ export function PairsBacktestWorkbench() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             )}
           </section>
@@ -425,7 +425,7 @@ export function PairsBacktestWorkbench() {
         {history.length === 0 ? (
           <Empty>No saved runs yet. Sign in and run a backtest.</Empty>
         ) : (
-          <table className="min-w-full">
+          <div className="overflow-x-auto"><table className="min-w-full">
             <thead className="border-b border-border">
               <tr>
                 <th className={TH}>When</th>
@@ -458,7 +458,7 @@ export function PairsBacktestWorkbench() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
     </div>
